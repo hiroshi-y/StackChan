@@ -255,19 +255,15 @@ static void usb_lib_task(void *arg)
 static void usb_task(void *arg)
 {
     while (true) {
-        // 診断: USB ホストが認識しているデバイス数 + OTG コントローラ実測
+        // 診断: 列挙済みデバイス数(dev=N)+ OTG コントローラ実測。
+        // dev>=1 で列挙成功(CP210x が見えている)、dev=0 で conn=1 なら列挙失敗(ハブ等)。
         {
             uint8_t addrs[8];
             int ndev = 0;
             usb_host_device_addr_list_fill(8, addrs, &ndev);
-            char m[40];
-            snprintf(m, sizeof(m), "USB devices seen: %d", ndev);
-            ui_log("..", m);
-
             char o[80];
-            snprintf(o, sizeof(o), "OTG mod=%u id=%u vbus=%u pwr=%u conn=%u",
-                     (unsigned)USB_DWC.gotgctl_reg.curmod,
-                     (unsigned)USB_DWC.gotgctl_reg.conidsts,
+            snprintf(o, sizeof(o), "dev=%d vbus=%u pwr=%u conn=%u",
+                     ndev,
                      (unsigned)USB_DWC.gotgctl_reg.asesvld,
                      (unsigned)USB_DWC.hprt_reg.prtpwr,
                      (unsigned)USB_DWC.hprt_reg.prtconnsts);
