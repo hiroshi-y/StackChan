@@ -279,7 +279,7 @@ static void diag_log_vidpid(void)
             usb_host_device_close(client, h);
         }
     }
-    usb_host_client_unregister(client);
+    usb_host_client_deregister(client);
 }
 
 // ---- CDC-ACM クライアントタスク (接続/再接続を管理) ----
