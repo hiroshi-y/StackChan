@@ -280,7 +280,10 @@ endif()
 # Include EspVideo if target is ESP32S3 or ESP32P4
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
     list(APPEND SOURCES "${XIAOZHI_MAIN_DIR}/boards/common/esp_video.cc"
-                        "${XIAOZHI_MAIN_DIR}/boards/common/rndis_board.cc"
+                        # rndis_board.cc を除外: RNDIS(USBネットワーク)は CoreS3 では未使用。
+                        # これが使う iot_usbh_cdc が Smart HAMLOG の usb_host_cdc_acm と
+                        # cdc_parse_interface_descriptor で多重定義衝突するため。
+                        # "${XIAOZHI_MAIN_DIR}/boards/common/rndis_board.cc"
                         )
 endif()
 

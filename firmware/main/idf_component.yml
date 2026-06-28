@@ -117,10 +117,27 @@ dependencies:
     - if: target in [esp32s3, esp32c5]
 
   espressif/esp_lcd_touch_st7123: ^1.0.0
-  espressif/iot_usbh_rndis: 
-    version: ^0.3.1
+  # iot_usbh_rndis を除外: RNDIS(USBネットワーク)は CoreS3 で未使用。これが引く iot_usbh_cdc が
+  # Smart HAMLOG app の usb_host_cdc_acm と cdc_parse_interface_descriptor で多重定義衝突するため。
+  # (rndis_board.cc も main/CMakeLists.txt でビルド対象から除外済み)
+  # espressif/iot_usbh_rndis:
+  #   version: ^0.3.1
+  #   rules:
+  #   - if: target in [esp32s3, esp32p4]
+
+  # Smart HAMLOG app: USB ホスト(CP210x = 無線機の CAT シリアル)
+  espressif/usb_host_cdc_acm:
+    version: "^2"
     rules:
-    - if: target in [esp32s3, esp32p4]
+    - if: target in [esp32s3]
+  espressif/usb_host_vcp:
+    version: "^1"
+    rules:
+    - if: target in [esp32s3]
+  espressif/usb_host_cp210x_vcp:
+    version: "^2"
+    rules:
+    - if: target in [esp32s3]
 
   ## Required IDF version
   idf:
