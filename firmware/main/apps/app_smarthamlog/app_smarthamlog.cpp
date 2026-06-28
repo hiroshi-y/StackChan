@@ -8,6 +8,7 @@
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
+#include "esp_system.h"   // esp_restart
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit::lvgl_cpp;
@@ -26,10 +27,27 @@ static lv_obj_t* _lbl_log    = nullptr;
 static uint32_t  _tick       = 0;
 static bool      _started    = false;
 static bool      _need_start = false;
+static const char* _rst_name = "?";   // 前回のリセット要因(リブート診断用)
+
+static const char* reset_reason_name(esp_reset_reason_t r)
+{
+    switch (r) {
+        case ESP_RST_POWERON:   return "POWERON";
+        case ESP_RST_SW:        return "SW";
+        case ESP_RST_PANIC:     return "PANIC";
+        case ESP_RST_INT_WDT:   return "INT_WDT";
+        case ESP_RST_TASK_WDT:  return "TASK_WDT";
+        case ESP_RST_WDT:       return "WDT";
+        case ESP_RST_BROWNOUT:  return "BROWNOUT";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        default:                return "OTHER";
+    }
+}
 
 void AppSmartHamlog::onCreate()
 {
     mclog::tagInfo(getAppInfo().name, "on create");
+    _rst_name = reset_reason_name(esp_reset_reason());   // 前回リセット要因を記録
     cat_core_init();   // ドライバ登録のみ(USB ホストはまだ起動しない)
 }
 
@@ -99,10 +117,14 @@ void AppSmartHamlog::onRunning()
     LvglLockGuard lock;
     lv_label_set_text(_lbl_status, cat_core_connected() ? "RIG CONNECTED" : "Waiting for rig...");
 
-    char fb[40];
+    // Phase 0 診断: 空きヒープ(ドレイン監視)+ 前回リセット要因 + RX 周波数
+    char fb[64];
     double f = cat_core_last_freq_mhz();
-    if (f > 0.0) snprintf(fb, sizeof(fb), "RX: %.6f MHz", f);
-    else         snprintf(fb, sizeof(fb), "RX: --- MHz");
+    char fstr[16];
+    if (f > 0.0) snprintf(fstr, sizeof(fstr), "%.4f", f);
+    else         { fstr[0] = '-'; fstr[1] = '\0'; }
+    snprintf(fb, sizeof(fb), "h:%uK r:%s RX:%s",
+             (unsigned)(esp_get_free_heap_size() / 1024), _rst_name, fstr);
     lv_label_set_text(_lbl_freq, fb);
 
     lv_label_set_text(_lbl_log, cat_core_last_log());
@@ -111,6 +133,14 @@ void AppSmartHamlog::onRunning()
 void AppSmartHamlog::onClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
+
+    // USB ホストを起動していた場合、QUIT で正しく停止して USB-OTG PHY を解放する
+    // (= USB-Serial/JTAG = COM9 が復帰)。数百ms〜1.5s ブロックする。
+    if (_started) {
+        cat_core_stop();
+        _started = false;   // 次回入室で再度起動できるように
+    }
+
     LvglLockGuard lock;
     _btn_quit.reset();
     if (_lbl_title)  { lv_obj_del(_lbl_title);  _lbl_title  = nullptr; }

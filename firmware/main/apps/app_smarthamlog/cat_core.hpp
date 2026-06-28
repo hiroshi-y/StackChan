@@ -18,6 +18,9 @@ void cat_core_init(void);
 // USB ホストを起動 (VBUS 供給開始)。Smart HAMLOG 画面に入ったときに 1 回だけ呼ぶ。
 void cat_core_start(void);
 
+// USB ホストを停止し USB-OTG PHY を解放(USB-Serial/JTAG = COM9 が復帰)。QUIT 時に呼ぶ。
+void cat_core_stop(void);
+
 // 操作
 void cat_core_set_freq_mhz(double mhz);   // 周波数設定を送信
 void cat_core_read_freq(void);            // 周波数読み取りを送信

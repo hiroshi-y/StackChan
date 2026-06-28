@@ -32,8 +32,11 @@ static int s_baud_idx = 2;                         // 19200
 static volatile bool s_connected = false;
 static volatile bool s_dev_lost = false;
 static bool s_started = false;
+static volatile bool s_stop = false;            // 停止要求(QUIT 時に立てる)
 static CdcAcmDevice *s_dev = nullptr;
 static SemaphoreHandle_t s_mtx = nullptr;
+static SemaphoreHandle_t s_usb_done = nullptr;   // usb_task 終了通知
+static SemaphoreHandle_t s_lib_done = nullptr;   // usb_lib_task 終了通知
 static cat_raw_rx_cb s_raw_sink = nullptr;   // ブリッジ用: 生 RX タップ
 static uint32_t s_baud_override = 0;          // 0=BAUDS テーブル / 非0=任意 baud
 
@@ -248,7 +251,13 @@ static void usb_lib_task(void *arg)
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
             usb_host_device_free_all();
         }
+        // 停止時: 全デバイス解放済み(ALL_FREE)になったらループを抜ける。
+        if (s_stop && (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE)) {
+            break;
+        }
     }
+    if (s_lib_done) xSemaphoreGive(s_lib_done);
+    vTaskDelete(nullptr);
 }
 
 // 診断: 列挙済みデバイスの VID/PID を読み、画面ログへ(CP210x か別チップかの判定用)。
@@ -285,7 +294,7 @@ static void diag_log_vidpid(void)
 // ---- CDC-ACM クライアントタスク (接続/再接続を管理) ----
 static void usb_task(void *arg)
 {
-    while (true) {
+    while (!s_stop) {
         // 診断: 列挙済みデバイス数(dev=N)+ OTG コントローラ実測。
         // dev>=1 で列挙成功(CP210x が見えている)、dev=0 で conn=1 なら列挙失敗(ハブ等)。
         {
@@ -303,7 +312,7 @@ static void usb_task(void *arg)
         }
 
         cdc_acm_host_device_config_t cfg = {};
-        cfg.connection_timeout_ms = 3000;
+        cfg.connection_timeout_ms = 1000;   // 短め(停止応答とリトライを速く)
         cfg.out_buffer_size = 256;
         cfg.in_buffer_size = 256;
         cfg.event_cb = event_cb;
@@ -331,7 +340,7 @@ static void usb_task(void *arg)
         rx_reset();
         ui_log("--", "USB connected");
 
-        while (!s_dev_lost) vTaskDelay(pdMS_TO_TICKS(100));
+        while (!s_dev_lost && !s_stop) vTaskDelay(pdMS_TO_TICKS(100));
 
         xSemaphoreTake(s_mtx, portMAX_DELAY);
         s_connected = false;
@@ -341,11 +350,16 @@ static void usb_task(void *arg)
         ui_log("--", "USB disconnected");
         if (d) delete d;   // デバイスを閉じる
     }
+    // 停止要求でループを抜けた: 終了を通知して自タスク削除
+    if (s_usb_done) xSemaphoreGive(s_usb_done);
+    vTaskDelete(nullptr);
 }
 
 void cat_core_init(void)
 {
     s_mtx = xSemaphoreCreateMutex();
+    if (!s_usb_done) s_usb_done = xSemaphoreCreateBinary();
+    if (!s_lib_done) s_lib_done = xSemaphoreCreateBinary();
     VCP::register_driver<CP210x>();   // CP2102/CP2105/CP2108
 }
 
@@ -376,10 +390,33 @@ static void enable_usb_host_vbus(void)
     i2c_master_bus_rm_device(aw);
 }
 
+// AW9523 の USB_OTG_EN(P0_5)を落とす(VBUS 供給停止)。停止時に呼ぶ。
+static void disable_usb_host_vbus(void)
+{
+    i2c_master_bus_handle_t bus = hal_bridge::board_get_i2c_bus();
+    if (!bus) return;
+    i2c_master_dev_handle_t aw = nullptr;
+    i2c_device_config_t dc = {};
+    dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dc.device_address = 0x58;
+    dc.scl_speed_hz = 100000;
+    if (i2c_master_bus_add_device(bus, &dc, &aw) != ESP_OK || !aw) return;
+    uint8_t reg = 0x02, cur = 0x27;
+    i2c_master_transmit_receive(aw, &reg, 1, &cur, 1, 100);
+    uint8_t wr[2] = {0x02, (uint8_t)(cur & ~0x20)};   // bit5 USB_OTG_EN を 0
+    i2c_master_transmit(aw, wr, sizeof(wr), 100);
+    i2c_master_bus_rm_device(aw);
+}
+
 void cat_core_start(void)
 {
     if (s_started) return;
     s_started = true;
+    s_stop = false;
+    s_dev_lost = false;
+    // 旧 stop の取りこぼし give をドレイン
+    if (s_usb_done) xSemaphoreTake(s_usb_done, 0);
+    if (s_lib_done) xSemaphoreTake(s_lib_done, 0);
 
     // 1. VBUS 供給(USB_OTG_EN を立てる)
     ui_log("--", "Enabling VBUS (USB_OTG_EN)");
@@ -408,4 +445,34 @@ void cat_core_start(void)
     // 3. CDC-ACM クライアント(接続待ち + 中継)
     ui_log("--", "USB host started, waiting for rig");
     xTaskCreate(usb_task, "cat_usb", 4096, nullptr, 5, nullptr);
+}
+
+// USB ホストを停止して USB-OTG PHY を解放する(= USB-Serial/JTAG = COM9 が復帰)。
+// QUIT 時に呼ぶ。数百ms〜1.5s ブロックする。
+void cat_core_stop(void)
+{
+    if (!s_started) return;
+    ui_log("--", "Stopping USB host...");
+    s_stop = true;
+
+    // 1. CDC クライアントタスク(usb_task)が device を閉じて抜けるのを待つ
+    //    (VCP::open タイムアウト 1s 分の余裕をみて最大 5s)
+    if (s_usb_done) xSemaphoreTake(s_usb_done, pdMS_TO_TICKS(5000));
+
+    // 2. CDC-ACM ドライバを uninstall(クライアント解除 → lib task に NO_CLIENTS/ALL_FREE)
+    cdc_acm_host_uninstall();
+
+    // 3. usb_lib_task が ALL_FREE で抜けるのを待つ
+    if (s_lib_done) xSemaphoreTake(s_lib_done, pdMS_TO_TICKS(3000));
+
+    // 4. USB ホストライブラリを uninstall → USB-OTG PHY を解放(USB-Serial/JTAG が復帰)
+    usb_host_uninstall();
+
+    // 5. VBUS(USB_OTG_EN)を落とす
+    disable_usb_host_vbus();
+
+    s_connected = false;
+    s_started = false;
+    s_stop = false;
+    s_dev = nullptr;
 }
