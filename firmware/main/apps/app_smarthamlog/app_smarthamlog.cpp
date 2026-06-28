@@ -40,21 +40,29 @@ void AppSmartHamlog::onOpen()
 
     _lbl_title = lv_label_create(lv_screen_active());
     lv_label_set_text(_lbl_title, "Smart HAMLOG (CAT)");
-    lv_obj_align(_lbl_title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(_lbl_title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_lbl_title, &lv_font_montserrat_20, 0);
+    lv_obj_align(_lbl_title, LV_ALIGN_TOP_MID, 0, 6);
 
     _lbl_status = lv_label_create(lv_screen_active());
     lv_label_set_text(_lbl_status, "Starting USB host...");
-    lv_obj_align(_lbl_status, LV_ALIGN_TOP_LEFT, 8, 40);
+    lv_obj_set_style_text_color(_lbl_status, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_24, 0);  // 最大・最重要
+    lv_obj_align(_lbl_status, LV_ALIGN_TOP_LEFT, 8, 44);
 
     _lbl_freq = lv_label_create(lv_screen_active());
     lv_label_set_text(_lbl_freq, "RX: --- MHz");
-    lv_obj_align(_lbl_freq, LV_ALIGN_TOP_LEFT, 8, 68);
+    lv_obj_set_style_text_color(_lbl_freq, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_lbl_freq, &lv_font_montserrat_20, 0);
+    lv_obj_align(_lbl_freq, LV_ALIGN_TOP_LEFT, 8, 84);
 
     _lbl_log = lv_label_create(lv_screen_active());
     lv_label_set_long_mode(_lbl_log, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_lbl_log, 300);
     lv_label_set_text(_lbl_log, "");
-    lv_obj_align(_lbl_log, LV_ALIGN_TOP_LEFT, 8, 96);
+    lv_obj_set_style_text_color(_lbl_log, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_lbl_log, &lv_font_montserrat_16, 0);
+    lv_obj_align(_lbl_log, LV_ALIGN_TOP_LEFT, 8, 118);
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
     _btn_quit->setAlign(LV_ALIGN_BOTTOM_MID);
