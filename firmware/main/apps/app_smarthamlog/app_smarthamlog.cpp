@@ -25,6 +25,7 @@ static lv_obj_t* _lbl_freq   = nullptr;
 static lv_obj_t* _lbl_log    = nullptr;
 static uint32_t  _tick       = 0;
 static bool      _started    = false;
+static bool      _need_start = false;
 
 void AppSmartHamlog::onCreate()
 {
@@ -60,15 +61,22 @@ void AppSmartHamlog::onOpen()
     _btn_quit->label().setText("QUIT");
     _btn_quit->onClick().connect([this]() { close(); });
 
-    // USB ホストを起動(VBUS + install)。プロセス内で一度だけ。
-    if (!_started) {
-        _started = true;
-        cat_core_start();
-    }
+    // USB ホスト起動(usb_host_install 等)は重い。LVGL ロックを握った onOpen 内で
+    // 実行すると UI が描画される前にブロック/パニックし得るので、UI を先に出してから
+    // 初回 onRunning で起動する(下記 onRunning の _need_start 分岐)。
+    if (!_started) _need_start = true;
 }
 
 void AppSmartHamlog::onRunning()
 {
+    // 初回: UI 描画後に USB ホストを起動(onOpen から遅延)。LVGL ロックは握らない。
+    if (_need_start) {
+        _need_start = false;
+        _started = true;
+        cat_core_start();
+        return;
+    }
+
     if (GetHAL().millis() - _tick < 500) return;
     _tick = GetHAL().millis();
     if (!_lbl_status) return;
