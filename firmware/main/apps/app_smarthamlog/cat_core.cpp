@@ -251,6 +251,37 @@ static void usb_lib_task(void *arg)
     }
 }
 
+// 診断: 列挙済みデバイスの VID/PID を読み、画面ログへ(CP210x か別チップかの判定用)。
+// 専用の USB クライアントを一時登録 → 各デバイスを open して device descriptor を取得。
+static void diag_log_vidpid(void)
+{
+    usb_host_client_handle_t client = nullptr;
+    usb_host_client_config_t ccfg = {};
+    ccfg.is_synchronous = false;
+    ccfg.max_num_event_msg = 5;
+    ccfg.async.client_event_callback = [](const usb_host_client_event_msg_t *, void *) {};
+    ccfg.async.callback_arg = nullptr;
+    if (usb_host_client_register(&ccfg, &client) != ESP_OK || !client) return;
+
+    uint8_t addrs[8];
+    int n = 0;
+    usb_host_device_addr_list_fill(8, addrs, &n);
+    for (int i = 0; i < n; i++) {
+        usb_device_handle_t h = nullptr;
+        if (usb_host_device_open(client, addrs[i], &h) == ESP_OK && h) {
+            const usb_device_desc_t *d = nullptr;
+            if (usb_host_get_device_descriptor(h, &d) == ESP_OK && d) {
+                char m[56];
+                snprintf(m, sizeof(m), "VID=%04X PID=%04X class=%02X",
+                         (unsigned)d->idVendor, (unsigned)d->idProduct, (unsigned)d->bDeviceClass);
+                ui_log("ID", m);
+            }
+            usb_host_device_close(client, h);
+        }
+    }
+    usb_host_client_unregister(client);
+}
+
 // ---- CDC-ACM クライアントタスク (接続/再接続を管理) ----
 static void usb_task(void *arg)
 {
@@ -268,6 +299,7 @@ static void usb_task(void *arg)
                      (unsigned)USB_DWC.hprt_reg.prtpwr,
                      (unsigned)USB_DWC.hprt_reg.prtconnsts);
             ui_log("..", o);
+            if (ndev > 0) diag_log_vidpid();   // 列挙済みなら VID/PID を表示
         }
 
         cdc_acm_host_device_config_t cfg = {};
