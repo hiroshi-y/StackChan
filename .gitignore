@@ -1,2 +1,5 @@
 .DS_Store
 .idea/
+
+# Smart HAMLOG app: 実ペアリングトークンを含む設定(コミット禁止)
+firmware/main/apps/app_smarthamlog/cat_config.h

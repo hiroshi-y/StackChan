@@ -4,6 +4,7 @@
  */
 #include "app_smarthamlog.h"
 #include "cat_core.hpp"
+#include "cat_bridge.hpp"
 #include <hal/hal.h>
 #include <mooncake.h>
 #include <mooncake_log.h>
@@ -121,6 +122,7 @@ void AppSmartHamlog::onRunning()
         _need_start = false;
         _started = true;
         cat_core_start();
+        cat_bridge_start();   // WiFi 確保 → Worker(WSS)接続
         return;
     }
 
@@ -129,20 +131,26 @@ void AppSmartHamlog::onRunning()
     if (!_lbl_status) return;
 
     LvglLockGuard lock;
-    char sb[48];
-    snprintf(sb, sizeof(sb), "WiFi:%s  RIG:%s",
+    char sb[64];
+    snprintf(sb, sizeof(sb), "WiFi:%s WS:%s RIG:%s",
              wifi_status_str(GetHAL().getWifiStatus()),
-             cat_core_connected() ? "CONNECTED" : "wait");
+             cat_bridge_ws_connected() ? "OK" : "--",
+             cat_core_connected() ? "OK" : "--");
     lv_label_set_text(_lbl_status, sb);
 
-    // Phase 0 診断: 空きヒープ(ドレイン監視)+ 前回リセット要因 + RX 周波数
-    char fb[64];
-    double f = cat_core_last_freq_mhz();
-    char fstr[16];
-    if (f > 0.0) snprintf(fstr, sizeof(fstr), "%.4f", f);
-    else         { fstr[0] = '-'; fstr[1] = '\0'; }
-    snprintf(fb, sizeof(fb), "h:%uK r:%s RX:%s",
-             (unsigned)(esp_get_free_heap_size() / 1024), _rst_name, fstr);
+    // 診断: 空きヒープ + 前回リセット要因 + RX 周波数。WS 未接続でエラーがあれば WS エラーを表示。
+    char fb[80];
+    unsigned heapK = (unsigned)(esp_get_free_heap_size() / 1024);
+    const char* werr = cat_bridge_last_err();
+    if (!cat_bridge_ws_connected() && werr[0] != '\0') {
+        snprintf(fb, sizeof(fb), "h:%uK WSerr:%s", heapK, werr);
+    } else {
+        double f = cat_core_last_freq_mhz();
+        char fstr[16];
+        if (f > 0.0) snprintf(fstr, sizeof(fstr), "%.4f", f);
+        else         { fstr[0] = '-'; fstr[1] = '\0'; }
+        snprintf(fb, sizeof(fb), "h:%uK r:%s RX:%s", heapK, _rst_name, fstr);
+    }
     lv_label_set_text(_lbl_freq, fb);
 
     lv_label_set_text(_lbl_log, cat_core_last_log());
@@ -155,8 +163,9 @@ void AppSmartHamlog::onClose()
     // USB ホストを起動していた場合、QUIT で正しく停止して USB-OTG PHY を解放する
     // (= USB-Serial/JTAG = COM9 が復帰)。数百ms〜1.5s ブロックする。
     if (_started) {
+        cat_bridge_stop();   // WSS 切断 + 無線機 RX タップ解除
         cat_core_stop();
-        _started = false;   // 次回入室で再度起動できるように
+        _started = false;    // 次回入室で再度起動できるように
     }
 
     LvglLockGuard lock;
