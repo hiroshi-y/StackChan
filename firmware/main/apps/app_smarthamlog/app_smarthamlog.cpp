@@ -44,6 +44,17 @@ static const char* reset_reason_name(esp_reset_reason_t r)
     }
 }
 
+static const char* wifi_status_str(WifiStatus s)
+{
+    switch (s) {
+        case WifiStatus::None:   return "OFF";
+        case WifiStatus::Low:    return "Low";
+        case WifiStatus::Medium: return "Mid";
+        case WifiStatus::High:   return "High";
+        default:                 return "?";
+    }
+}
+
 void AppSmartHamlog::onCreate()
 {
     mclog::tagInfo(getAppInfo().name, "on create");
@@ -69,25 +80,28 @@ void AppSmartHamlog::onOpen()
     lv_obj_set_style_pad_bottom(_lbl_title, 8, 0);
     lv_obj_align(_lbl_title, LV_ALIGN_TOP_MID, 0, 0);
 
+    // ステータス(上部): WiFi + RIG 接続
     _lbl_status = lv_label_create(lv_screen_active());
-    lv_label_set_text(_lbl_status, "Starting USB host...");
+    lv_label_set_text(_lbl_status, "WiFi:--  RIG:--");
     lv_obj_set_style_text_color(_lbl_status, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_24, 0);  // 最大・最重要
-    lv_obj_align(_lbl_status, LV_ALIGN_TOP_LEFT, 8, 56);
+    lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_20, 0);
+    lv_obj_align(_lbl_status, LV_ALIGN_TOP_LEFT, 8, 48);
 
+    // 診断(上部): 空きヒープ / 前回リセット要因 / RX 周波数
     _lbl_freq = lv_label_create(lv_screen_active());
-    lv_label_set_text(_lbl_freq, "RX: --- MHz");
+    lv_label_set_text(_lbl_freq, "");
     lv_obj_set_style_text_color(_lbl_freq, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_lbl_freq, &lv_font_montserrat_20, 0);
-    lv_obj_align(_lbl_freq, LV_ALIGN_TOP_LEFT, 8, 94);
+    lv_obj_set_style_text_font(_lbl_freq, &lv_font_montserrat_16, 0);
+    lv_obj_align(_lbl_freq, LV_ALIGN_TOP_LEFT, 8, 78);
 
+    // ログ(中央)
     _lbl_log = lv_label_create(lv_screen_active());
     lv_label_set_long_mode(_lbl_log, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_lbl_log, 300);
     lv_label_set_text(_lbl_log, "");
     lv_obj_set_style_text_color(_lbl_log, lv_color_white(), 0);
     lv_obj_set_style_text_font(_lbl_log, &lv_font_montserrat_16, 0);
-    lv_obj_align(_lbl_log, LV_ALIGN_TOP_LEFT, 8, 128);
+    lv_obj_align(_lbl_log, LV_ALIGN_CENTER, 0, 24);
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
     _btn_quit->setAlign(LV_ALIGN_BOTTOM_MID);
@@ -115,7 +129,11 @@ void AppSmartHamlog::onRunning()
     if (!_lbl_status) return;
 
     LvglLockGuard lock;
-    lv_label_set_text(_lbl_status, cat_core_connected() ? "RIG CONNECTED" : "Waiting for rig...");
+    char sb[48];
+    snprintf(sb, sizeof(sb), "WiFi:%s  RIG:%s",
+             wifi_status_str(GetHAL().getWifiStatus()),
+             cat_core_connected() ? "CONNECTED" : "wait");
+    lv_label_set_text(_lbl_status, sb);
 
     // Phase 0 診断: 空きヒープ(ドレイン監視)+ 前回リセット要因 + RX 周波数
     char fb[64];
