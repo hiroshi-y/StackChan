@@ -4,6 +4,7 @@
 //   cat-box の cat_bridge から WiFi 初期化/イベント部を除去(WiFi は HAL が管理)。
 #include "cat_bridge.hpp"
 #include "cat_core.hpp"
+#include "cat_store.hpp"   // NVS のトークン/ホスト(QR ペアリング)
 #include "hal/hal.h"   // GetHAL(), WifiStatus
 
 #if __has_include("cat_config.h")
@@ -118,8 +119,12 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *event_d
 static void ws_start(void)
 {
     if (s_client) return;
-    static char uri[256];
-    snprintf(uri, sizeof(uri), "wss://%s/cat/device?token=%s", CAT_WORKER_HOST, CAT_PAIR_TOKEN);
+    // ホスト/トークンは NVS(QR ペアリングで設定)優先、無ければ cat_config.h。
+    static char host[128], token[160];
+    if (!cat_store_get_host(host, sizeof(host)))   snprintf(host, sizeof(host), "%s", CAT_WORKER_HOST);
+    if (!cat_store_get_token(token, sizeof(token))) snprintf(token, sizeof(token), "%s", CAT_PAIR_TOKEN);
+    static char uri[320];
+    snprintf(uri, sizeof(uri), "wss://%s/cat/device?token=%s", host, token);
 
     esp_websocket_client_config_t cfg = {};
     cfg.uri = uri;
@@ -131,7 +136,7 @@ static void ws_start(void)
     s_client = esp_websocket_client_init(&cfg);
     if (!s_client) { ESP_LOGE(TAG, "ws init failed"); snprintf(s_last_err, sizeof(s_last_err), "ws init fail"); return; }
     esp_websocket_register_events(s_client, WEBSOCKET_EVENT_ANY, ws_event, nullptr);
-    ESP_LOGI(TAG, "-> wss://%s/cat/device", CAT_WORKER_HOST);
+    ESP_LOGI(TAG, "-> wss://%s/cat/device", host);
     esp_websocket_client_start(s_client);
 }
 

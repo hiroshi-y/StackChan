@@ -140,6 +140,11 @@ dependencies:
     - if: target in [esp32s3]
   # Smart HAMLOG app: Worker(worker-cat)への WSS 中継
   espressif/esp_websocket_client: "^1.2"
+  # Smart HAMLOG app: QR ペアリング(カメラで QR を読む)
+  espressif/quirc:
+    version: "^1.2.0"
+    rules:
+    - if: target in [esp32s3]
 
   ## Required IDF version
   idf:

@@ -5,6 +5,8 @@
 #include "app_smarthamlog.h"
 #include "cat_core.hpp"
 #include "cat_bridge.hpp"
+#include "cat_qr.hpp"
+#include "cat_provision.hpp"
 #include <hal/hal.h>
 #include <mooncake.h>
 #include <mooncake_log.h>
@@ -13,6 +15,7 @@
 #include "esp_system.h"               // esp_reset_reason / esp_get_free_heap_size
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"            // xTaskCreate(QUIT の非同期停止)
+#include <cstring>                    // memcpy
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit::lvgl_cpp;
@@ -30,10 +33,27 @@ static lv_obj_t* _lbl_title  = nullptr;
 static lv_obj_t* _lbl_status = nullptr;
 static lv_obj_t* _lbl_freq   = nullptr;
 static lv_obj_t* _lbl_log    = nullptr;
+static std::unique_ptr<Button> _btn_pair;
 static uint32_t  _tick       = 0;
 static bool      _started    = false;
 static bool      _need_start = false;
 static const char* _rst_name = "?";   // 前回のリセット要因(リブート診断用)
+
+// ---- QR ペアリング ----
+static bool          _pairing      = false;
+static volatile bool _pair_pending = false;   // デコード成功(callback で立つ)
+static char          _pair_payload[512];
+static int           _pair_len     = 0;
+static char          _pair_msg[64] = "";
+
+static void on_qr_decoded(const char *payload, int len)
+{
+    if (len > (int)sizeof(_pair_payload) - 1) len = sizeof(_pair_payload) - 1;
+    memcpy(_pair_payload, payload, len);
+    _pair_payload[len] = '\0';
+    _pair_len = len;
+    _pair_pending = true;
+}
 
 static const char* reset_reason_name(esp_reset_reason_t r)
 {
@@ -110,9 +130,24 @@ void AppSmartHamlog::onOpen()
     lv_obj_align(_lbl_log, LV_ALIGN_CENTER, 0, 24);
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
-    _btn_quit->setAlign(LV_ALIGN_BOTTOM_MID);
+    _btn_quit->setAlign(LV_ALIGN_BOTTOM_RIGHT);
     _btn_quit->label().setText("QUIT");
     _btn_quit->onClick().connect([this]() { close(); });
+
+    // PAIR: カメラで QR を読んで WiFi/トークンをプロビジョニング
+    _btn_pair = std::make_unique<Button>(lv_screen_active());
+    _btn_pair->setAlign(LV_ALIGN_BOTTOM_LEFT);
+    _btn_pair->label().setText("PAIR");
+    _btn_pair->onClick().connect([this]() {
+        if (!_pairing) {
+            _pair_pending = false;
+            _pair_msg[0] = '\0';
+            if (cat_qr_begin(on_qr_decoded)) _pairing = true;
+        } else {
+            cat_qr_end();   // もう一度押すとキャンセル
+            _pairing = false;
+        }
+    });
 
     // USB ホスト起動(usb_host_install 等)は重い。LVGL ロックを握った onOpen 内で
     // 実行すると UI が描画される前にブロック/パニックし得るので、UI を先に出してから
@@ -129,6 +164,29 @@ void AppSmartHamlog::onRunning()
         cat_core_start();
         cat_bridge_start();   // WiFi 確保 → Worker(WSS)接続
         return;
+    }
+
+    // ペアリング中: QR スキャン状態を表示し、デコードできたらプロビジョニングを適用。
+    if (_pairing) {
+        if (_pair_pending) {
+            _pair_pending = false;
+            cat_qr_end();
+            int nw = 0;
+            bool ok = cat_provision_apply_json(_pair_payload, _pair_len, &nw);
+            snprintf(_pair_msg, sizeof(_pair_msg),
+                     ok ? "Paired! WiFi+%d. QUIT&re-enter" : "QR parse failed", nw);
+            _pairing = false;
+        } else {
+            if (GetHAL().millis() - _tick < 300) return;
+            _tick = GetHAL().millis();
+            if (!_lbl_status) return;
+            LvglLockGuard lock;
+            char sb[48];
+            snprintf(sb, sizeof(sb), "Scan QR...  frames:%u", (unsigned)cat_qr_frame_count());
+            lv_label_set_text(_lbl_status, sb);
+            lv_label_set_text(_lbl_log, cat_qr_status());
+            return;
+        }
     }
 
     if (GetHAL().millis() - _tick < 500) return;
@@ -158,7 +216,7 @@ void AppSmartHamlog::onRunning()
     }
     lv_label_set_text(_lbl_freq, fb);
 
-    lv_label_set_text(_lbl_log, cat_core_last_log());
+    lv_label_set_text(_lbl_log, _pair_msg[0] ? _pair_msg : cat_core_last_log());
 }
 
 // 停止処理(USB host/WSS の解放)は ~1.5s かかる。onClose で同期実行すると QUIT の
@@ -174,6 +232,8 @@ void AppSmartHamlog::onClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
 
+    if (_pairing) { cat_qr_end(); _pairing = false; }
+
     if (_started) {
         _started = false;   // 次回入室で再度起動できるように
         xTaskCreate(shl_teardown_task, "shl_stop", 4096, nullptr, 5, nullptr);
@@ -181,6 +241,7 @@ void AppSmartHamlog::onClose()
 
     LvglLockGuard lock;
     _btn_quit.reset();
+    _btn_pair.reset();
     if (_lbl_title)  { lv_obj_del(_lbl_title);  _lbl_title  = nullptr; }
     if (_lbl_status) { lv_obj_del(_lbl_status); _lbl_status = nullptr; }
     if (_lbl_freq)   { lv_obj_del(_lbl_freq);   _lbl_freq   = nullptr; }
