@@ -430,6 +430,12 @@ void cat_core_start(void)
     // 旧停止で USB-Serial/JTAG 用 PHY を作っていたら削除(OTG が PHY を取れるように)
     if (s_jtag_phy) { usb_del_phy(s_jtag_phy); s_jtag_phy = nullptr; }
 
+    // フレッシュ起動直後は USB-Serial/JTAG(COM9)が内部 USB PHY パッドを握ったままで、
+    // OTG ホストが PHY を取れず usb_host_install が INVALID_STATE で失敗する。USJ をパッドから
+    // 切り離して PHY を解放する(stop の COM9 復帰 = pad_enable(true) の逆操作。COM9 は切れる=
+    // ホストモードでは想定どおり。QUIT 時に cat_core_stop が COM9 を復帰させる)。
+    usb_serial_jtag_ll_phy_enable_pad(false);
+
     // 2. USB ホストライブラリ + CDC-ACM ドライバを自前で install(BSP の代替)
     ui_log("--", "Installing USB host");
     usb_host_config_t host_config = {};
@@ -437,16 +443,22 @@ void cat_core_start(void)
     host_config.intr_flags = ESP_INTR_FLAG_LEVEL1;
     esp_err_t err = usb_host_install(&host_config);
     if (err != ESP_OK) {
-        ui_log("!!", "usb_host_install failed");
-        ESP_LOGE(TAG, "usb_host_install: %d", err);
+        char eb[48];
+        snprintf(eb, sizeof(eb), "usb_host_install fail 0x%x", (unsigned)err);
+        ui_log("!!", eb);   // コードを画面にも出す(COM9 が使えないため)
+        ESP_LOGE(TAG, "usb_host_install: 0x%x", (unsigned)err);
+        s_started = false;  // 失敗したら状態を戻す(再起動せず再試行できるように)
         return;
     }
     xTaskCreate(usb_lib_task, "cat_usblib", 4096, nullptr, 10, nullptr);
 
     err = cdc_acm_host_install(nullptr);
     if (err != ESP_OK) {
-        ui_log("!!", "cdc_acm_host_install failed");
-        ESP_LOGE(TAG, "cdc_acm_host_install: %d", err);
+        char eb[48];
+        snprintf(eb, sizeof(eb), "cdc_acm_install fail 0x%x", (unsigned)err);
+        ui_log("!!", eb);
+        ESP_LOGE(TAG, "cdc_acm_host_install: 0x%x", (unsigned)err);
+        s_started = false;   // 稀。状態だけ戻す(必要ならリブート)
         return;
     }
 
