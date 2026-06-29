@@ -47,7 +47,8 @@ static bool          _pairing      = false;
 static volatile bool _pair_pending = false;   // デコード成功(callback で立つ)
 static char          _pair_payload[512];
 static int           _pair_len     = 0;
-static char          _pair_msg[160] = "";
+static char          _pair_msg[224] = "";
+static uint32_t      _led_off_at   = 0;         // 完了 LED を消す時刻(millis、0=点灯予定なし)
 static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー canvas(ペアリング中のみ表示)
 static uint16_t*     _preview_rgb  = nullptr;   // canvas の RGB565 バッファ(PSRAM)
 
@@ -153,23 +154,27 @@ void AppSmartHamlog::onOpen()
     lv_obj_align(_lbl_log, LV_ALIGN_CENTER, 0, 24);
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
-    _btn_quit->setSize(104, 56);   // 大きめでタップしやすく
+    _btn_quit->setSize(84, 44);    // 題字(24)より小さく。タップはしやすいサイズ
     _btn_quit->setAlign(LV_ALIGN_BOTTOM_RIGHT);
     _btn_quit->label().setText("QUIT");
-    _btn_quit->label().setTextFont(&lv_font_montserrat_20);
+    _btn_quit->label().setTextFont(&lv_font_montserrat_16);
     _btn_quit->onClick().connect([this]() { close(); });
 
     // PAIR: カメラで QR を読んで WiFi/トークンをプロビジョニング
     _btn_pair = std::make_unique<Button>(lv_screen_active());
-    _btn_pair->setSize(104, 56);
+    _btn_pair->setSize(84, 44);
     _btn_pair->setAlign(LV_ALIGN_BOTTOM_LEFT);
     _btn_pair->label().setText("PAIR");
-    _btn_pair->label().setTextFont(&lv_font_montserrat_20);
+    _btn_pair->label().setTextFont(&lv_font_montserrat_16);
     _btn_pair->onClick().connect([this]() {
         if (!_pairing) {
             _pair_pending = false;
             _pair_msg[0] = '\0';
-            if (cat_qr_begin(on_qr_decoded)) _pairing = true;
+            if (cat_qr_begin(on_qr_decoded)) {
+                _pairing = true;
+                // ペアリング中は QUIT だけにする(PAIR を隠す)
+                lv_obj_add_flag(_btn_pair->get(), LV_OBJ_FLAG_HIDDEN);
+            }
         } else {
             cat_qr_end();   // もう一度押すとキャンセル
             _pairing = false;
@@ -207,17 +212,22 @@ void AppSmartHamlog::onRunning()
             char sum[96] = {0};
             bool ok = cat_provision_apply_json(_pair_payload, _pair_len, sum, sizeof(sum));
             if (ok) {
-                snprintf(_pair_msg, sizeof(_pair_msg), "Paired!\n%s\nQUIT & re-enter -> WS connect", sum);
+                // 追加した WiFi(QR)と、今つながっている WiFi は別のことがある(StackChan は
+                // 記憶済みの中で電波が届くものに繋ぐ)。両方を表示する。
+                snprintf(_pair_msg, sizeof(_pair_msg),
+                         "Paired! %s\nNow connected: %s\nQUIT & re-enter -> WS", sum, wifi_ssid_str());
                 GetHAL().showRgbColor(0, 70, 0);   // 緑 LED で完了合図(音は未対応のため暫定)
             } else {
                 snprintf(_pair_msg, sizeof(_pair_msg), "QR read OK but parse failed");
                 GetHAL().showRgbColor(70, 0, 0);   // 赤 LED
             }
+            _led_off_at = GetHAL().millis() + 5000;   // 5秒で消灯(消費電力対策)
             _pairing = false;
             LvglLockGuard lock;   // 通常 UI に戻す
             if (_img_preview) lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
             if (_lbl_title)   lv_obj_clear_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
             if (_lbl_freq)    lv_obj_clear_flag(_lbl_freq, LV_OBJ_FLAG_HIDDEN);
+            if (_btn_pair)    lv_obj_clear_flag(_btn_pair->get(), LV_OBJ_FLAG_HIDDEN);
         } else {
             if (GetHAL().millis() - _tick < 200) return;
             _tick = GetHAL().millis();
@@ -234,9 +244,11 @@ void AppSmartHamlog::onRunning()
                 lv_obj_clear_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_invalidate(_img_preview);   // canvas はバッファを直接指すので invalidate のみ
             }
-            // プレビューを見やすくするため題字/診断は隠す
+            // プレビューを見やすくするため題字/診断は隠す。PAIR ボタンもペアリング中は隠し
+            // (QUIT だけ残す)。
             if (_lbl_title) lv_obj_add_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
             if (_lbl_freq)  lv_obj_add_flag(_lbl_freq, LV_OBJ_FLAG_HIDDEN);
+            if (_btn_pair)  lv_obj_add_flag(_btn_pair->get(), LV_OBJ_FLAG_HIDDEN);
             char sb[48];
             snprintf(sb, sizeof(sb), "Scan QR  frames:%u", (unsigned)cat_qr_frame_count());
             lv_label_set_text(_lbl_status, sb);
@@ -247,6 +259,13 @@ void AppSmartHamlog::onRunning()
 
     if (GetHAL().millis() - _tick < 500) return;
     _tick = GetHAL().millis();
+
+    // 完了 LED は数秒で消す(点けっぱなしは消費電力が大きい)
+    if (_led_off_at && GetHAL().millis() >= _led_off_at) {
+        GetHAL().showRgbColor(0, 0, 0);
+        _led_off_at = 0;
+    }
+
     if (!_lbl_status) return;
 
     LvglLockGuard lock;
@@ -289,6 +308,8 @@ void AppSmartHamlog::onClose()
     mclog::tagInfo(getAppInfo().name, "on close");
 
     if (_pairing) { cat_qr_end(); _pairing = false; }
+
+    if (_led_off_at) { GetHAL().showRgbColor(0, 0, 0); _led_off_at = 0; }   // 退室時に LED 消灯
 
     if (_started) {
         _started = false;   // 次回入室で再度起動できるように
