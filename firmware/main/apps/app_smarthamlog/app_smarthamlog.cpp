@@ -178,7 +178,10 @@ void AppSmartHamlog::onRunning()
     if (_need_start) {
         _need_start = false;
         _started = true;
-        cat_core_start();
+        // USB ホスト(リグ)はエントリでは起動しない。ブラウザが接続(WS "open")した時に
+        // cat_bridge の handle_text が cat_core_start する。これで:
+        //  - ペアリング中はカメラ/quirc とリソース競合しない
+        //  - リグ未使用の間は COM9(USB-Serial/JTAG)が生きる(書き込み/監視ができる)
         cat_bridge_start();   // WiFi 確保 → Worker(WSS)接続
         return;
     }
