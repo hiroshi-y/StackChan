@@ -191,7 +191,8 @@ void AppSmartHamlog::onRunning()
         if (_pair_pending) {
             _pair_pending = false;
             cat_qr_end();
-            hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);   // スキャン完了ビープ(app スレッド)
+            // 注: ビープ(app_play_sound)は mooncake コンテキストでは AudioService 未初期化で
+            //     クラッシュするため使えない。鳴らす手段は別途検討(TODO)。
             int nw = 0;
             bool ok = cat_provision_apply_json(_pair_payload, _pair_len, &nw);
             snprintf(_pair_msg, sizeof(_pair_msg),

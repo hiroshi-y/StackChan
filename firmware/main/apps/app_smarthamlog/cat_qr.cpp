@@ -62,14 +62,9 @@ static bool stream_start(void)
     s_fd = open(QR_DEV, O_RDONLY);
     if (s_fd < 0) { set_status("camera open failed"); return false; }
 
+    // DVP は YUV422P 等に固定されており S_FMT(GREY) は失敗する(→ STREAMON も失敗)。
+    // フォーマットは変更せず、現在の設定(G_FMT)をそのまま使い、Y 成分を抽出する。
     struct v4l2_format fmt;
-    memset(&fmt, 0, sizeof(fmt));
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = QR_W;
-    fmt.fmt.pix.height = QR_H;
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_GREY;   // まず GREY を要求
-    ioctl(s_fd, VIDIOC_S_FMT, &fmt);
-    // 実際に設定されたフォーマットを読み戻す(GREY 非対応なら YUV422 等になる)
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(s_fd, VIDIOC_G_FMT, &fmt) != 0) { set_status("G_FMT failed"); return false; }
@@ -117,13 +112,14 @@ static void stream_stop(void)
 static void to_gray(const uint8_t *frame, size_t len)
 {
     const int N = QR_W * QR_H;
-    if (s_pixfmt == V4L2_PIX_FMT_GREY) {
+    if (s_pixfmt == V4L2_PIX_FMT_GREY || s_pixfmt == V4L2_PIX_FMT_YUV422P) {
+        // GREY、または YUV422P(平面: Y プレーンが先頭 N バイトに連続)→ そのままコピー
         memcpy(s_gray, frame, (size_t)N < len ? (size_t)N : len);
     } else if (s_pixfmt == V4L2_PIX_FMT_UYVY) {
-        // U Y V Y ... → Y は奇数オフセット
+        // U Y V Y ...(interleaved)→ Y は奇数オフセット
         for (int i = 0; i < N && (size_t)(i * 2 + 1) < len; i++) s_gray[i] = frame[i * 2 + 1];
     } else {
-        // YUYV(既定)/その他 → Y は偶数オフセット
+        // YUYV(interleaved)/その他 → Y は偶数オフセット
         for (int i = 0; i < N && (size_t)(i * 2) < len; i++) s_gray[i] = frame[i * 2];
     }
 }
@@ -182,7 +178,8 @@ static void scan_task(void *arg)
         if (buf.flags & V4L2_BUF_FLAG_DONE) {
             s_frames++;
             to_gray(s_buf[buf.index], s_buf_len[buf.index]);
-            if (!s_hit) {
+            // quirc(identify+adaptive二値化)は重く UI/プレビューを奪うので 3 フレームに 1 回。
+            if (!s_hit && (s_frames % 3 == 0)) {
                 int w, h;
                 uint8_t *img = quirc_begin(s_q, &w, &h);
                 if (img) {
