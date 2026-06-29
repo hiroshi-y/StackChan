@@ -9,7 +9,10 @@
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
-#include "esp_system.h"   // esp_restart
+#include <assets/assets.h>            // assets::get_image(アイコン)
+#include "esp_system.h"               // esp_reset_reason / esp_get_free_heap_size
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"            // xTaskCreate(QUIT の非同期停止)
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit::lvgl_cpp;
@@ -17,7 +20,9 @@ using namespace smooth_ui_toolkit::lvgl_cpp;
 AppSmartHamlog::AppSmartHamlog()
 {
     setAppInfo().name = "Smart HAMLOG";
-    // setAppInfo().icon = (void*)&icon_app_dummy;  // アイコンは Phase 1 で
+    // アイコン(暫定: 既存のコントローラアイコンを流用。専用ラジオアイコンは後日アセット生成)
+    static auto icon = assets::get_image("icon_controller.bin");
+    setAppInfo().icon = (void*)&icon;
 }
 
 static std::unique_ptr<Button> _btn_quit;
@@ -156,16 +161,22 @@ void AppSmartHamlog::onRunning()
     lv_label_set_text(_lbl_log, cat_core_last_log());
 }
 
+// 停止処理(USB host/WSS の解放)は ~1.5s かかる。onClose で同期実行すると QUIT の
+// 反応が悪くなるため、バックグラウンドタスクで行う。メニューには即戻る。
+static void shl_teardown_task(void *arg)
+{
+    cat_bridge_stop();   // WSS 切断 + 無線機 RX タップ解除
+    cat_core_stop();     // USB host 停止 → USB-OTG PHY 解放(COM9 復帰、数秒後)
+    vTaskDelete(nullptr);
+}
+
 void AppSmartHamlog::onClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
 
-    // USB ホストを起動していた場合、QUIT で正しく停止して USB-OTG PHY を解放する
-    // (= USB-Serial/JTAG = COM9 が復帰)。数百ms〜1.5s ブロックする。
     if (_started) {
-        cat_bridge_stop();   // WSS 切断 + 無線機 RX タップ解除
-        cat_core_stop();
-        _started = false;    // 次回入室で再度起動できるように
+        _started = false;   // 次回入室で再度起動できるように
+        xTaskCreate(shl_teardown_task, "shl_stop", 4096, nullptr, 5, nullptr);
     }
 
     LvglLockGuard lock;

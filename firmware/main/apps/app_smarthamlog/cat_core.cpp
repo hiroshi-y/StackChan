@@ -33,6 +33,7 @@ static volatile bool s_connected = false;
 static volatile bool s_dev_lost = false;
 static bool s_started = false;
 static volatile bool s_stop = false;            // 停止要求(QUIT 時に立てる)
+static volatile bool s_stopping = false;        // 停止処理 実行中(再入室の競合回避)
 static CdcAcmDevice *s_dev = nullptr;
 static SemaphoreHandle_t s_mtx = nullptr;
 static SemaphoreHandle_t s_usb_done = nullptr;   // usb_task 終了通知
@@ -410,6 +411,7 @@ static void disable_usb_host_vbus(void)
 
 void cat_core_start(void)
 {
+    while (s_stopping) vTaskDelay(pdMS_TO_TICKS(50));   // 前回の停止処理の完了を待つ
     if (s_started) return;
     s_started = true;
     s_stop = false;
@@ -452,6 +454,7 @@ void cat_core_start(void)
 void cat_core_stop(void)
 {
     if (!s_started) return;
+    s_stopping = true;
     ui_log("--", "Stopping USB host...");
     s_stop = true;
 
@@ -475,4 +478,5 @@ void cat_core_stop(void)
     s_started = false;
     s_stop = false;
     s_dev = nullptr;
+    s_stopping = false;
 }
