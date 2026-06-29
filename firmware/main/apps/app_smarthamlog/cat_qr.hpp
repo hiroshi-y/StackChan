@@ -15,3 +15,8 @@ void cat_qr_end(void);
 const char *cat_qr_status(void);
 uint32_t    cat_qr_frame_count(void);
 uint32_t    cat_qr_detect_count(void);
+
+// プレビュー用: 最新フレームのグレースケール(320x240, 8bit)。未取得は nullptr。
+const uint8_t *cat_qr_gray(void);
+int cat_qr_width(void);
+int cat_qr_height(void);

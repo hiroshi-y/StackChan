@@ -45,6 +45,8 @@ static volatile bool _pair_pending = false;   // デコード成功(callback で
 static char          _pair_payload[512];
 static int           _pair_len     = 0;
 static char          _pair_msg[64] = "";
+static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー(ペアリング中のみ表示)
+static lv_image_dsc_t _preview_dsc;
 
 static void on_qr_decoded(const char *payload, int len)
 {
@@ -92,6 +94,18 @@ void AppSmartHamlog::onOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
     LvglLockGuard lock;
+
+    // カメラプレビュー(背景・初期は非表示。ペアリング中のみ表示)。最初に作るので最背面。
+    _img_preview = lv_image_create(lv_screen_active());
+    lv_obj_align(_img_preview, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+    memset(&_preview_dsc, 0, sizeof(_preview_dsc));
+    _preview_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
+    _preview_dsc.header.cf     = LV_COLOR_FORMAT_L8;
+    _preview_dsc.header.w      = (uint32_t)cat_qr_width();
+    _preview_dsc.header.h      = (uint32_t)cat_qr_height();
+    _preview_dsc.header.stride = (uint32_t)cat_qr_width();
+    _preview_dsc.data_size     = (uint32_t)(cat_qr_width() * cat_qr_height());
 
     // 題字: 全幅のティール色ヘッダ + 白の大きい文字で目立たせる
     _lbl_title = lv_label_create(lv_screen_active());
@@ -146,6 +160,9 @@ void AppSmartHamlog::onOpen()
         } else {
             cat_qr_end();   // もう一度押すとキャンセル
             _pairing = false;
+            if (_img_preview) lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_title)   lv_obj_clear_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_freq)    lv_obj_clear_flag(_lbl_freq, LV_OBJ_FLAG_HIDDEN);
         }
     });
 
@@ -176,13 +193,28 @@ void AppSmartHamlog::onRunning()
             snprintf(_pair_msg, sizeof(_pair_msg),
                      ok ? "Paired! WiFi+%d. QUIT&re-enter" : "QR parse failed", nw);
             _pairing = false;
+            LvglLockGuard lock;   // 通常 UI に戻す
+            if (_img_preview) lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_title)   lv_obj_clear_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_freq)    lv_obj_clear_flag(_lbl_freq, LV_OBJ_FLAG_HIDDEN);
         } else {
-            if (GetHAL().millis() - _tick < 300) return;
+            if (GetHAL().millis() - _tick < 200) return;
             _tick = GetHAL().millis();
             if (!_lbl_status) return;
             LvglLockGuard lock;
+            // プレビュー更新(最新グレースケールフレーム)
+            const uint8_t *g = cat_qr_gray();
+            if (g && _img_preview) {
+                _preview_dsc.data = g;
+                lv_image_set_src(_img_preview, &_preview_dsc);
+                lv_obj_clear_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_invalidate(_img_preview);
+            }
+            // プレビューを見やすくするため題字/診断は隠す
+            if (_lbl_title) lv_obj_add_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_freq)  lv_obj_add_flag(_lbl_freq, LV_OBJ_FLAG_HIDDEN);
             char sb[48];
-            snprintf(sb, sizeof(sb), "Scan QR...  frames:%u", (unsigned)cat_qr_frame_count());
+            snprintf(sb, sizeof(sb), "Scan QR  frames:%u", (unsigned)cat_qr_frame_count());
             lv_label_set_text(_lbl_status, sb);
             lv_label_set_text(_lbl_log, cat_qr_status());
             return;
@@ -242,6 +274,7 @@ void AppSmartHamlog::onClose()
     LvglLockGuard lock;
     _btn_quit.reset();
     _btn_pair.reset();
+    if (_img_preview){ lv_obj_del(_img_preview);_img_preview= nullptr; }
     if (_lbl_title)  { lv_obj_del(_lbl_title);  _lbl_title  = nullptr; }
     if (_lbl_status) { lv_obj_del(_lbl_status); _lbl_status = nullptr; }
     if (_lbl_freq)   { lv_obj_del(_lbl_freq);   _lbl_freq   = nullptr; }

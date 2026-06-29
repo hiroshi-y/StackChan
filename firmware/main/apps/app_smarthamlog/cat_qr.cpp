@@ -51,6 +51,9 @@ static char s_status[40] = "";
 uint32_t cat_qr_frame_count(void) { return s_frames; }
 uint32_t cat_qr_detect_count(void) { return s_detect; }
 const char *cat_qr_status(void) { return s_status; }
+const uint8_t *cat_qr_gray(void) { return s_frames > 0 ? s_gray : nullptr; }
+int cat_qr_width(void) { return QR_W; }
+int cat_qr_height(void) { return QR_H; }
 static void set_status(const char *s) { snprintf(s_status, sizeof(s_status), "%s", s); ESP_LOGI(TAG, "%s", s); }
 
 // V4L2 ストリーム開始。GREY を要求し、ダメなら YUV422 を受ける(Y を抽出して使う)。
