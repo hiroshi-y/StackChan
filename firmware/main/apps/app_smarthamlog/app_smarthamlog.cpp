@@ -147,6 +147,7 @@ void AppSmartHamlog::onOpen()
     _btn_quit->setSize(104, 56);   // 大きめでタップしやすく
     _btn_quit->setAlign(LV_ALIGN_BOTTOM_RIGHT);
     _btn_quit->label().setText("QUIT");
+    _btn_quit->label().setTextFont(&lv_font_montserrat_20);
     _btn_quit->onClick().connect([this]() { close(); });
 
     // PAIR: カメラで QR を読んで WiFi/トークンをプロビジョニング
@@ -154,6 +155,7 @@ void AppSmartHamlog::onOpen()
     _btn_pair->setSize(104, 56);
     _btn_pair->setAlign(LV_ALIGN_BOTTOM_LEFT);
     _btn_pair->label().setText("PAIR");
+    _btn_pair->label().setTextFont(&lv_font_montserrat_20);
     _btn_pair->onClick().connect([this]() {
         if (!_pairing) {
             _pair_pending = false;

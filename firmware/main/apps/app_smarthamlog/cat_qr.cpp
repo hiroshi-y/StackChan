@@ -56,8 +56,8 @@ int cat_qr_width(void) { return QR_W; }
 int cat_qr_height(void) { return QR_H; }
 static void set_status(const char *s) { snprintf(s_status, sizeof(s_status), "%s", s); ESP_LOGI(TAG, "%s", s); }
 
-// V4L2 ストリーム開始。GREY を要求し、ダメなら YUV422 を受ける(Y を抽出して使う)。
-static bool stream_start(void)
+// V4L2 ストリーム開始(1回分)。GREY を要求し、ダメなら YUV422 を受ける(Y を抽出して使う)。
+static bool stream_start_once(void)
 {
     s_fd = open(QR_DEV, O_RDONLY);
     if (s_fd < 0) { set_status("camera open failed"); return false; }
@@ -106,6 +106,21 @@ static void stream_stop(void)
         if (s_buf[i]) { munmap(s_buf[i], s_buf_len[i]); s_buf[i] = nullptr; s_buf_len[i] = 0; }
     }
     if (s_fd >= 0) { close(s_fd); s_fd = -1; }
+}
+
+// ストリーム開始(リトライ付き)。初回は STREAMON が失敗しやすい(直前まで別用途で
+// カメラを使っていた直後など)。失敗したら後始末してから少し待って再試行する。
+static bool stream_start(void)
+{
+    for (int attempt = 0; attempt < 4; attempt++) {
+        if (stream_start_once()) {
+            if (attempt > 0) ESP_LOGI(TAG, "stream_start ok on retry %d", attempt);
+            return true;
+        }
+        stream_stop();   // 途中まで掴んだ fd/mmap を解放
+        vTaskDelay(pdMS_TO_TICKS(80));
+    }
+    return false;
 }
 
 // フレーム(任意フォーマット)→ s_gray(8bit グレースケール QR_W*QR_H)。

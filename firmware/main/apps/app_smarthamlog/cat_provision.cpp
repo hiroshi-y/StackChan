@@ -2,6 +2,7 @@
 //   2形式:
 //    - コンパクト(現行): "<hostidx>\n<ssid>\n<pass>\n<token_b64>"
 //    - JSON(後方互換):  {"v":1,"w":[[ssid,pass]],"t":"<b64>","h":<1|2>}
+//   WiFi は 1 件のみ(QR を小さく保ち低解像度カメラで読めるようにするため。複数は載せない)。
 //   トークンは base64 で来る。復号して 32 バイトなら hex(64文字)に戻す(worker は 64-hex 期待)。
 #include "cat_provision.hpp"
 #include "cat_store.hpp"
