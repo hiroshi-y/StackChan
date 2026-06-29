@@ -11,10 +11,12 @@
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
-#include <assets/assets.h>            // assets::get_image(アイコン)
+#include <assets/assets.h>            // assets::get_image(アイコン)/ OGG_NEW_NOTIFICATION
+#include "hal/board/hal_bridge.h"     // app_play_sound(スキャン完了ビープ)
 #include "esp_system.h"               // esp_reset_reason / esp_get_free_heap_size
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"            // xTaskCreate(QUIT の非同期停止)
+#include "esp_heap_caps.h"           // プレビュー RGB565 バッファ(PSRAM)
 #include <cstring>                    // memcpy
 
 using namespace mooncake;
@@ -47,6 +49,7 @@ static int           _pair_len     = 0;
 static char          _pair_msg[64] = "";
 static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー(ペアリング中のみ表示)
 static lv_image_dsc_t _preview_dsc;
+static uint16_t*     _preview_rgb  = nullptr;   // gray→RGB565 変換バッファ(PSRAM)
 
 static void on_qr_decoded(const char *payload, int len)
 {
@@ -55,6 +58,7 @@ static void on_qr_decoded(const char *payload, int len)
     _pair_payload[len] = '\0';
     _pair_len = len;
     _pair_pending = true;
+    hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);   // スキャン完了ビープ(画面が見えないため)
 }
 
 static const char* reset_reason_name(esp_reset_reason_t r)
@@ -99,13 +103,16 @@ void AppSmartHamlog::onOpen()
     _img_preview = lv_image_create(lv_screen_active());
     lv_obj_align(_img_preview, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+    if (!_preview_rgb)
+        _preview_rgb = (uint16_t*)heap_caps_malloc(cat_qr_width() * cat_qr_height() * 2, MALLOC_CAP_SPIRAM);
     memset(&_preview_dsc, 0, sizeof(_preview_dsc));
     _preview_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
-    _preview_dsc.header.cf     = LV_COLOR_FORMAT_L8;
+    _preview_dsc.header.cf     = LV_COLOR_FORMAT_RGB565;
     _preview_dsc.header.w      = (uint32_t)cat_qr_width();
     _preview_dsc.header.h      = (uint32_t)cat_qr_height();
-    _preview_dsc.header.stride = (uint32_t)cat_qr_width();
-    _preview_dsc.data_size     = (uint32_t)(cat_qr_width() * cat_qr_height());
+    _preview_dsc.header.stride = (uint32_t)(cat_qr_width() * 2);
+    _preview_dsc.data_size     = (uint32_t)(cat_qr_width() * cat_qr_height() * 2);
+    _preview_dsc.data          = (const uint8_t*)_preview_rgb;
 
     // 題字: 全幅のティール色ヘッダ + 白の大きい文字で目立たせる
     _lbl_title = lv_label_create(lv_screen_active());
@@ -204,8 +211,12 @@ void AppSmartHamlog::onRunning()
             LvglLockGuard lock;
             // プレビュー更新(最新グレースケールフレーム)
             const uint8_t *g = cat_qr_gray();
-            if (g && _img_preview) {
-                _preview_dsc.data = g;
+            if (g && _preview_rgb && _img_preview) {
+                int npix = cat_qr_width() * cat_qr_height();
+                for (int i = 0; i < npix; i++) {
+                    uint8_t v = g[i];
+                    _preview_rgb[i] = (uint16_t)(((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3));
+                }
                 lv_image_set_src(_img_preview, &_preview_dsc);
                 lv_obj_clear_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_invalidate(_img_preview);
