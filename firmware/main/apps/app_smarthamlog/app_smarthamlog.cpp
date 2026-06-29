@@ -14,6 +14,7 @@
 #include <assets/assets.h>            // assets::get_image(アイコン)/ OGG_NEW_NOTIFICATION
 #include "hal/board/hal_bridge.h"     // app_play_sound(スキャン完了ビープ)
 #include "esp_system.h"               // esp_reset_reason / esp_get_free_heap_size
+#include "esp_wifi.h"                 // esp_wifi_sta_get_ap_info(実接続 SSID 取得)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"            // xTaskCreate(QUIT の非同期停止)
 #include "esp_heap_caps.h"           // プレビュー RGB565 バッファ(PSRAM)
@@ -75,15 +76,20 @@ static const char* reset_reason_name(esp_reset_reason_t r)
     }
 }
 
-static const char* wifi_status_str(WifiStatus s)
+// 実際に接続中の SSID を返す(QR で渡した SSID と、StackChan が以前から記憶していた別の
+// SSID のどちらに繋がったか分かるように)。未接続は "OFF"。
+static const char* wifi_ssid_str(void)
 {
-    switch (s) {
-        case WifiStatus::None:   return "OFF";
-        case WifiStatus::Low:    return "Low";
-        case WifiStatus::Medium: return "Mid";
-        case WifiStatus::High:   return "High";
-        default:                 return "?";
+    static char buf[40];
+    if (GetHAL().getWifiStatus() != WifiStatus::None) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK && ap.ssid[0]) {
+            snprintf(buf, sizeof(buf), "%s", (const char*)ap.ssid);
+            return buf;
+        }
+        return "ON";
     }
+    return "OFF";
 }
 
 void AppSmartHamlog::onCreate()
@@ -122,9 +128,12 @@ void AppSmartHamlog::onOpen()
 
     // ステータス(上部): WiFi + RIG 接続
     _lbl_status = lv_label_create(lv_screen_active());
+    // 接続 SSID を出すと長くなる場合があるので、横幅を決めて長文はスクロールさせる。
+    lv_label_set_long_mode(_lbl_status, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_width(_lbl_status, 304);
     lv_label_set_text(_lbl_status, "WiFi:--  RIG:--");
     lv_obj_set_style_text_color(_lbl_status, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_16, 0);
     lv_obj_align(_lbl_status, LV_ALIGN_TOP_LEFT, 8, 48);
 
     // 診断(上部): 空きヒープ / 前回リセット要因 / RX 周波数
@@ -241,9 +250,9 @@ void AppSmartHamlog::onRunning()
     if (!_lbl_status) return;
 
     LvglLockGuard lock;
-    char sb[64];
+    char sb[96];
     snprintf(sb, sizeof(sb), "WiFi:%s WS:%s RIG:%s",
-             wifi_status_str(GetHAL().getWifiStatus()),
+             wifi_ssid_str(),
              cat_bridge_ws_connected() ? "OK" : "--",
              cat_core_connected() ? "OK" : "--");
     lv_label_set_text(_lbl_status, sb);
