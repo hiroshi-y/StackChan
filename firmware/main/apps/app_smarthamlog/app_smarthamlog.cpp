@@ -46,7 +46,7 @@ static bool          _pairing      = false;
 static volatile bool _pair_pending = false;   // デコード成功(callback で立つ)
 static char          _pair_payload[512];
 static int           _pair_len     = 0;
-static char          _pair_msg[64] = "";
+static char          _pair_msg[128] = "";
 static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー canvas(ペアリング中のみ表示)
 static uint16_t*     _preview_rgb  = nullptr;   // canvas の RGB565 バッファ(PSRAM)
 
@@ -144,12 +144,14 @@ void AppSmartHamlog::onOpen()
     lv_obj_align(_lbl_log, LV_ALIGN_CENTER, 0, 24);
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
+    _btn_quit->setSize(104, 56);   // 大きめでタップしやすく
     _btn_quit->setAlign(LV_ALIGN_BOTTOM_RIGHT);
     _btn_quit->label().setText("QUIT");
     _btn_quit->onClick().connect([this]() { close(); });
 
     // PAIR: カメラで QR を読んで WiFi/トークンをプロビジョニング
     _btn_pair = std::make_unique<Button>(lv_screen_active());
+    _btn_pair->setSize(104, 56);
     _btn_pair->setAlign(LV_ALIGN_BOTTOM_LEFT);
     _btn_pair->label().setText("PAIR");
     _btn_pair->onClick().connect([this]() {
@@ -191,12 +193,15 @@ void AppSmartHamlog::onRunning()
         if (_pair_pending) {
             _pair_pending = false;
             cat_qr_end();
-            // 注: ビープ(app_play_sound)は mooncake コンテキストでは AudioService 未初期化で
-            //     クラッシュするため使えない。鳴らす手段は別途検討(TODO)。
-            int nw = 0;
-            bool ok = cat_provision_apply_json(_pair_payload, _pair_len, &nw);
-            snprintf(_pair_msg, sizeof(_pair_msg),
-                     ok ? "Paired! WiFi+%d. QUIT&re-enter" : "QR parse failed", nw);
+            char sum[96] = {0};
+            bool ok = cat_provision_apply_json(_pair_payload, _pair_len, sum, sizeof(sum));
+            if (ok) {
+                snprintf(_pair_msg, sizeof(_pair_msg), "Paired!\n%s\nQUIT & re-enter -> WS connect", sum);
+                GetHAL().showRgbColor(0, 70, 0);   // 緑 LED で完了合図(音は未対応のため暫定)
+            } else {
+                snprintf(_pair_msg, sizeof(_pair_msg), "QR read OK but parse failed");
+                GetHAL().showRgbColor(70, 0, 0);   // 赤 LED
+            }
             _pairing = false;
             LvglLockGuard lock;   // 通常 UI に戻す
             if (_img_preview) lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);

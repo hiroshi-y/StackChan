@@ -5,5 +5,5 @@
 //   - h  → ホスト(1=本番/2=staging/URL)を NVS へ
 #pragma once
 
-// 成功で true。wifi_added に追加した WiFi 件数を返す(nullptr 可)。
-bool cat_provision_apply_json(const char *json, int len, int *wifi_added);
+// 成功で true。summary に人間可読の結果(WiFi名・トークン・ホスト)を埋める(画面表示用)。
+bool cat_provision_apply_json(const char *json, int len, char *summary, int summary_len);

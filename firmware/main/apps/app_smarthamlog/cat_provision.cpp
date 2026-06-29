@@ -17,9 +17,9 @@ static const char *TAG = "cat_prov";
 static const char *HOST_PROD    = "smart-hamlog-cat.hiroshi-a4b.workers.dev";
 static const char *HOST_STAGING = "staging-smart-hamlog-cat.hiroshi-a4b.workers.dev";
 
-bool cat_provision_apply_json(const char *json, int len, int *wifi_added)
+bool cat_provision_apply_json(const char *json, int len, char *summary, int summary_len)
 {
-    if (wifi_added) *wifi_added = 0;
+    if (summary && summary_len > 0) summary[0] = '\0';
     char ssid[33] = {0}, pass[64] = {0}, tokbuf[160] = {0};
     int  host_idx = 0;
     bool parsed = false;
@@ -74,7 +74,6 @@ bool cat_provision_apply_json(const char *json, int len, int *wifi_added)
 
     // WiFi → StackChan の SsidManager
     SsidManager::GetInstance().AddSsid(ssid, pass);
-    if (wifi_added) *wifi_added = 1;
     ESP_LOGI(TAG, "AddSsid: %s", ssid);
 
     // トークン: base64 → 32 バイトなら hex(64文字)に戻す(worker は 64-hex 期待)。
@@ -102,5 +101,10 @@ bool cat_provision_apply_json(const char *json, int len, int *wifi_added)
     else if (host_idx == 2) cat_store_set_host(HOST_STAGING);
     ESP_LOGI(TAG, "host_idx=%d", host_idx);
 
+    if (summary && summary_len > 0) {
+        snprintf(summary, summary_len, "WiFi:%s%s host:%s", ssid,
+                 tokbuf[0] ? " +token" : "",
+                 host_idx == 1 ? "prod" : host_idx == 2 ? "staging" : "(keep)");
+    }
     return true;
 }
