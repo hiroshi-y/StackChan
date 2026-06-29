@@ -46,7 +46,7 @@ static bool          _pairing      = false;
 static volatile bool _pair_pending = false;   // デコード成功(callback で立つ)
 static char          _pair_payload[512];
 static int           _pair_len     = 0;
-static char          _pair_msg[128] = "";
+static char          _pair_msg[160] = "";
 static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー canvas(ペアリング中のみ表示)
 static uint16_t*     _preview_rgb  = nullptr;   // canvas の RGB565 バッファ(PSRAM)
 
