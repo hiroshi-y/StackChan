@@ -10,6 +10,7 @@
 #include "usb/vcp.hpp"
 #include "usb/vcp_cp210x.hpp"
 #include "usb/cdc_acm_host.h"
+#include "esp_private/usb_phy.h"     // usb_new_phy/usb_del_phy(停止時に PHY を JTAG へ戻す)
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -38,6 +39,7 @@ static CdcAcmDevice *s_dev = nullptr;
 static SemaphoreHandle_t s_mtx = nullptr;
 static SemaphoreHandle_t s_usb_done = nullptr;   // usb_task 終了通知
 static SemaphoreHandle_t s_lib_done = nullptr;   // usb_lib_task 終了通知
+static usb_phy_handle_t  s_jtag_phy = nullptr;   // 停止時に作る USB-Serial/JTAG PHY(COM9 復帰)
 static cat_raw_rx_cb s_raw_sink = nullptr;   // ブリッジ用: 生 RX タップ
 static uint32_t s_baud_override = 0;          // 0=BAUDS テーブル / 非0=任意 baud
 
@@ -424,6 +426,9 @@ void cat_core_start(void)
     ui_log("--", "Enabling VBUS (USB_OTG_EN)");
     enable_usb_host_vbus();
 
+    // 旧停止で USB-Serial/JTAG 用 PHY を作っていたら削除(OTG が PHY を取れるように)
+    if (s_jtag_phy) { usb_del_phy(s_jtag_phy); s_jtag_phy = nullptr; }
+
     // 2. USB ホストライブラリ + CDC-ACM ドライバを自前で install(BSP の代替)
     ui_log("--", "Installing USB host");
     usb_host_config_t host_config = {};
@@ -468,8 +473,15 @@ void cat_core_stop(void)
     // 3. usb_lib_task が ALL_FREE で抜けるのを待つ
     if (s_lib_done) xSemaphoreTake(s_lib_done, pdMS_TO_TICKS(3000));
 
-    // 4. USB ホストライブラリを uninstall → USB-OTG PHY を解放(USB-Serial/JTAG が復帰)
+    // 4. USB ホストライブラリを uninstall → USB-OTG PHY を解放
     usb_host_uninstall();
+
+    // 4b. 内部 PHY を USB-Serial/JTAG に戻す(= COM9 復帰)。uninstall だけでは PHY が
+    //     JTAG にルーティングされないため、明示的に SERIAL_JTAG 用 PHY を作る。
+    usb_phy_config_t jc = {};
+    jc.controller = USB_PHY_CTRL_SERIAL_JTAG;
+    jc.target = USB_PHY_TARGET_INT;
+    if (usb_new_phy(&jc, &s_jtag_phy) != ESP_OK) s_jtag_phy = nullptr;
 
     // 5. VBUS(USB_OTG_EN)を落とす
     disable_usb_host_vbus();

@@ -126,7 +126,7 @@ static void ws_start(void)
     cfg.crt_bundle_attach = esp_crt_bundle_attach;   // 公開CA(Cloudflare)を検証
     cfg.reconnect_timeout_ms = 5000;
     cfg.network_timeout_ms = 10000;
-    cfg.task_stack = 8192;   // TLS ハンドシェイク用に既定(4KB)から増やす
+    cfg.task_stack = 12288;  // TLS ハンドシェイク(証明書バンドル)用に増やす(401 リトライ中の安定化)
 
     s_client = esp_websocket_client_init(&cfg);
     if (!s_client) { ESP_LOGE(TAG, "ws init failed"); snprintf(s_last_err, sizeof(s_last_err), "ws init fail"); return; }
