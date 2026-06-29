@@ -47,9 +47,8 @@ static volatile bool _pair_pending = false;   // デコード成功(callback で
 static char          _pair_payload[512];
 static int           _pair_len     = 0;
 static char          _pair_msg[64] = "";
-static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー(ペアリング中のみ表示)
-static lv_image_dsc_t _preview_dsc;
-static uint16_t*     _preview_rgb  = nullptr;   // gray→RGB565 変換バッファ(PSRAM)
+static lv_obj_t*     _img_preview  = nullptr;   // カメラプレビュー canvas(ペアリング中のみ表示)
+static uint16_t*     _preview_rgb  = nullptr;   // canvas の RGB565 バッファ(PSRAM)
 
 static void on_qr_decoded(const char *payload, int len)
 {
@@ -58,7 +57,7 @@ static void on_qr_decoded(const char *payload, int len)
     _pair_payload[len] = '\0';
     _pair_len = len;
     _pair_pending = true;
-    hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);   // スキャン完了ビープ(画面が見えないため)
+    // 注: 音/NVS/画面処理は scan_task(PSRAM スタック)からは行わない。app スレッドで処理する。
 }
 
 static const char* reset_reason_name(esp_reset_reason_t r)
@@ -100,19 +99,13 @@ void AppSmartHamlog::onOpen()
     LvglLockGuard lock;
 
     // カメラプレビュー(背景・初期は非表示。ペアリング中のみ表示)。最初に作るので最背面。
-    _img_preview = lv_image_create(lv_screen_active());
-    lv_obj_align(_img_preview, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
     if (!_preview_rgb)
         _preview_rgb = (uint16_t*)heap_caps_malloc(cat_qr_width() * cat_qr_height() * 2, MALLOC_CAP_SPIRAM);
-    memset(&_preview_dsc, 0, sizeof(_preview_dsc));
-    _preview_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
-    _preview_dsc.header.cf     = LV_COLOR_FORMAT_RGB565;
-    _preview_dsc.header.w      = (uint32_t)cat_qr_width();
-    _preview_dsc.header.h      = (uint32_t)cat_qr_height();
-    _preview_dsc.header.stride = (uint32_t)(cat_qr_width() * 2);
-    _preview_dsc.data_size     = (uint32_t)(cat_qr_width() * cat_qr_height() * 2);
-    _preview_dsc.data          = (const uint8_t*)_preview_rgb;
+    _img_preview = lv_canvas_create(lv_screen_active());   // cat-box と同じく canvas + RGB565
+    lv_obj_align(_img_preview, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_add_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
+    if (_preview_rgb)
+        lv_canvas_set_buffer(_img_preview, _preview_rgb, cat_qr_width(), cat_qr_height(), LV_COLOR_FORMAT_RGB565);
 
     // 題字: 全幅のティール色ヘッダ + 白の大きい文字で目立たせる
     _lbl_title = lv_label_create(lv_screen_active());
@@ -195,6 +188,7 @@ void AppSmartHamlog::onRunning()
         if (_pair_pending) {
             _pair_pending = false;
             cat_qr_end();
+            hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);   // スキャン完了ビープ(app スレッド)
             int nw = 0;
             bool ok = cat_provision_apply_json(_pair_payload, _pair_len, &nw);
             snprintf(_pair_msg, sizeof(_pair_msg),
@@ -217,9 +211,8 @@ void AppSmartHamlog::onRunning()
                     uint8_t v = g[i];
                     _preview_rgb[i] = (uint16_t)(((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3));
                 }
-                lv_image_set_src(_img_preview, &_preview_dsc);
                 lv_obj_clear_flag(_img_preview, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_invalidate(_img_preview);
+                lv_obj_invalidate(_img_preview);   // canvas はバッファを直接指すので invalidate のみ
             }
             // プレビューを見やすくするため題字/診断は隠す
             if (_lbl_title) lv_obj_add_flag(_lbl_title, LV_OBJ_FLAG_HIDDEN);
