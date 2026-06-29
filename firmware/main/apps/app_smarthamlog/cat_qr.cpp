@@ -112,14 +112,14 @@ static void stream_stop(void)
 static void to_gray(const uint8_t *frame, size_t len)
 {
     const int N = QR_W * QR_H;
-    if (s_pixfmt == V4L2_PIX_FMT_GREY || s_pixfmt == V4L2_PIX_FMT_YUV422P) {
-        // GREY、または YUV422P(平面: Y プレーンが先頭 N バイトに連続)→ そのままコピー
+    if (s_pixfmt == V4L2_PIX_FMT_GREY) {
         memcpy(s_gray, frame, (size_t)N < len ? (size_t)N : len);
     } else if (s_pixfmt == V4L2_PIX_FMT_UYVY) {
         // U Y V Y ...(interleaved)→ Y は奇数オフセット
         for (int i = 0; i < N && (size_t)(i * 2 + 1) < len; i++) s_gray[i] = frame[i * 2 + 1];
     } else {
-        // YUYV(interleaved)/その他 → Y は偶数オフセット
+        // YUYV / esp_video の YUV422P(実機ではインターリーブ)→ Y は偶数オフセット。
+        // この経路で前回 quirc デコード実績あり(memcpy にすると像が2重化しデコード不可だった)。
         for (int i = 0; i < N && (size_t)(i * 2) < len; i++) s_gray[i] = frame[i * 2];
     }
 }
