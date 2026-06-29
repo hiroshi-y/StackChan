@@ -440,7 +440,9 @@ void cat_core_start(void)
     ui_log("--", "Installing USB host");
     usb_host_config_t host_config = {};
     host_config.skip_phy_setup = false;
-    host_config.intr_flags = ESP_INTR_FLAG_LEVEL1;
+    // intr_flags=0 で「空いている任意のレベル(1〜3)」から割り込みを確保する。LEVEL1 固定だと
+    // カメラ等が LEVEL1 スロットを使い切っていると ESP_ERR_NOT_FOUND(0x105)で失敗するため。
+    host_config.intr_flags = 0;
     esp_err_t err = usb_host_install(&host_config);
     if (err != ESP_OK) {
         char eb[48];
