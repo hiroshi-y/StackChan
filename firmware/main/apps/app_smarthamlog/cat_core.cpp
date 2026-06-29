@@ -60,12 +60,14 @@ static uint32_t cur_baud(void) { return s_baud_override ? s_baud_override : BAUD
 // ---- ログヘルパ ----
 static void log_bytes(const char *pfx, const uint8_t *d, size_t n)
 {
+    // HEX ダンプは画面に出さない(デバッグ用にシリアル debug のみ)。画面には parse_rx /
+    // send_bytes が「Read: / Set: x.xxxx MHz」と人間可読で出す。
     char buf[200];
     size_t o = 0;
     for (size_t i = 0; i < n && o + 3 < sizeof(buf); i++) {
         o += snprintf(buf + o, sizeof(buf) - o, "%02X ", d[i]);
     }
-    ui_log(pfx, buf);
+    ESP_LOGD(TAG, "%s %s", pfx, buf);
 }
 
 // ---- 受信バッファ & 周波数解析 ----
@@ -101,7 +103,12 @@ static void parse_rx(void)
             }
             i++;
         }
-        if (hz >= 0) { s_freq_mhz = (double)hz / 1e6; rx_reset(); }
+        if (hz >= 0) {
+            s_freq_mhz = (double)hz / 1e6;
+            char m[28]; snprintf(m, sizeof(m), "Read: %.4f MHz", s_freq_mhz);
+            ui_log("RX", m);
+            rx_reset();
+        }
     } else { // Yaesu/Kenwood ASCII: FA<digits>;
         for (size_t i = 0; i + 3 < s_rxlen; i++) {
             if (s_rx[i] == 'F' && s_rx[i + 1] == 'A') {
@@ -114,7 +121,12 @@ static void parse_rx(void)
                         if (s_rx[k] >= '0' && s_rx[k] <= '9') s[p++] = s_rx[k];
                     }
                     s[p] = 0;
-                    if (p >= 8) { s_freq_mhz = atol(s) / 1e6; rx_reset(); return; }
+                    if (p >= 8) {
+                        s_freq_mhz = atol(s) / 1e6;
+                        char m[28]; snprintf(m, sizeof(m), "Read: %.4f MHz", s_freq_mhz);
+                        ui_log("RX", m);
+                        rx_reset(); return;
+                    }
                 }
             }
         }
@@ -142,6 +154,43 @@ static void event_cb(const cdc_acm_host_dev_event_data_t *e, void *arg)
     }
 }
 
+// TX バイト列に「周波数セット」コマンドがあれば MHz を返す(無ければ -1)。画面表示用。
+static double parse_tx_set_mhz(const uint8_t *d, size_t n)
+{
+    if (s_mode == CAT_MODE_ICOM_CIV) {
+        for (size_t i = 0; i + 5 < n; i++) {
+            if (d[i] == 0xFE && d[i + 1] == 0xFE) {
+                size_t j = i + 2;
+                while (j < n && d[j] != 0xFD) j++;
+                if (j >= n) break;
+                uint8_t cmd = (j - i >= 4) ? d[i + 4] : 0xFF;
+                size_t dstart = i + 5, dcount = (j > dstart) ? (j - dstart) : 0;
+                if (cmd == 0x05 && dcount == 5) {   // 0x05 = 周波数セット
+                    char s[11]; int p = 0;
+                    for (int k = 4; k >= 0; k--) {
+                        uint8_t b = d[dstart + k];
+                        s[p++] = '0' + ((b >> 4) & 0xf);
+                        s[p++] = '0' + (b & 0xf);
+                    }
+                    s[p] = 0;
+                    return atol(s) / 1e6;
+                }
+                i = j;
+            }
+        }
+    } else { // Yaesu: FA<digits>;(桁あり = セット)
+        for (size_t i = 0; i + 3 < n; i++) {
+            if (d[i] == 'F' && d[i + 1] == 'A') {
+                size_t j = i + 2; char s[16]; size_t p = 0;
+                while (j < n && d[j] != ';') { if (d[j] >= '0' && d[j] <= '9' && p < sizeof(s) - 1) s[p++] = d[j]; j++; }
+                s[p] = 0;
+                if (j < n && p >= 8) return atol(s) / 1e6;
+            }
+        }
+    }
+    return -1.0;
+}
+
 // ---- 送信 ----
 static void send_bytes(const uint8_t *d, size_t n)
 {
@@ -153,6 +202,8 @@ static void send_bytes(const uint8_t *d, size_t n)
         memcpy(tmp, d, n);
         esp_err_t err = dev->tx_blocking(tmp, n, 200);
         log_bytes("TX:", d, n);
+        double setmhz = parse_tx_set_mhz(d, n);
+        if (setmhz > 0) { char m[28]; snprintf(m, sizeof(m), "Set: %.4f MHz", setmhz); ui_log("TX", m); }
         if (err != ESP_OK) ui_log("!!", "TX error");
     } else {
         ui_log("--", "USB not connected");
