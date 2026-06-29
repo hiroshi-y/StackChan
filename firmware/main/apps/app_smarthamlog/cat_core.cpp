@@ -11,6 +11,7 @@
 #include "usb/vcp_cp210x.hpp"
 #include "usb/cdc_acm_host.h"
 #include "esp_private/usb_phy.h"     // usb_new_phy/usb_del_phy(停止時に PHY を JTAG へ戻す)
+#include "hal/usb_serial_jtag_ll.h"  // 停止時に USB-Serial/JTAG のパッドを再有効化(COM9 復帰)
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -482,6 +483,10 @@ void cat_core_stop(void)
     jc.controller = USB_PHY_CTRL_SERIAL_JTAG;
     jc.target = USB_PHY_TARGET_INT;
     if (usb_new_phy(&jc, &s_jtag_phy) != ESP_OK) s_jtag_phy = nullptr;
+    // ルーティングだけでは不十分。USB パッド(D+ プルアップ)を再有効化しないと
+    // PC が再列挙せず COM9 が戻らない(USB-Serial/JTAG ドライバ初期化と同じ手順)。
+    usb_serial_jtag_ll_phy_enable_external(false);  // 内部 PHY を使う
+    usb_serial_jtag_ll_phy_enable_pad(true);        // ★ パッド有効化 → PC が再認識
 
     // 5. VBUS(USB_OTG_EN)を落とす
     disable_usb_host_vbus();
