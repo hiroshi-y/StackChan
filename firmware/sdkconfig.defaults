@@ -82,3 +82,11 @@ CONFIG_LV_BUILD_DEMOS=n
 # CP210x がぶら下がるため、ハブ対応が無いと conn=1 でも CP210x を列挙できない)
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
 CONFIG_USB_HOST_HUB_MULTI_LEVEL=y
+
+# 省電力: esp_pm(DFS / 自動ライトスリープ)は無効。
+# このファーム(LVGL + PSRAM フレームバッファ + アバター + カメラ)では、CPU 周波数スケーリング
+# やライトスリープが PSRAM/表示まわりのメモリ破壊を招き、暗転後タッチ→アプリ起動時に
+# LVGL テーマ適用で LoadProhibited PANIC を起こした(EXCVADDR=野良ポインタ)。
+# 省電力は #4 のバックライト 15 秒消灯が担う(LCD バックライトが最大の消費源)。
+# CPU 省電力を入れるなら PSRAM + PM の整合(クロック源/ロック)を別途詰める必要がある。
+# CONFIG_PM_ENABLE is not set

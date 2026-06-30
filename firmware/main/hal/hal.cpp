@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal.h"
+#include "power_lite.h"
 #include <memory>
 #include <mooncake_log.h>
 #include <nvs_flash.h>
@@ -40,6 +41,10 @@ void Hal::init()
     imu_init();
     servo_init();
     lvgl_init();
+
+    // #1/#2 省電力: esp_pm 自動ライトスリープ + DFS を構成し、NO_LIGHT_SLEEP ロックを取得(既定は抑止)。
+    // 画面OFF(#4)や重要モード(CAT/QR)に応じてロックを出し入れする。
+    power_lite_init();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -280,24 +285,98 @@ uint8_t Hal::getSpeakerVolume()
 /* -------------------------------------------------------------------------- */
 #include "board/hal_bridge.h"
 #include <stackchan/stackchan.h>
+#include "power_lite.h"
+#include "board.h"
+
+/* -------------------------------------------------------------------------- */
+/*            #4 バックライト自動消灯 + タップ復帰 (cat-box 移植)              */
+/* -------------------------------------------------------------------------- */
+// 無操作 BACKLIGHT_IDLE_MS でバックライトを消灯し、画面OFF を power_lite に通知してライト
+// スリープを許可する。タップで復帰。復帰のきっかけタップは LVGL に渡さず握りつぶし、消灯中の
+// タップで下のボタンが誤爆するのを防ぐ(cat-box と同じ挙動)。
+// 表示制御はバックライト輝度のみ(PMIC I2C)。SetPowerSaveMode は LVGL ロック再入を招くため使わない。
+#define BACKLIGHT_IDLE_MS 15000u   // 無操作 15 秒でバックライト消灯(launcher の 30 秒スクリーンセーバーより先に消す)
+
+static bool s_bl_on            = true;   // バックライト点灯中か
+static bool s_swallow_touch    = false;  // 復帰タップを握りつぶし中か
+static bool s_backlight_autooff = false; // 15 秒自動消灯を有効にするか(Smart HAMLOG 在室中のみ true)。
+                                         // 外(ランチャー等)では false = 既定の表示(PowerSaveTimer 任せ)。
+
+static void backlight_set_off(void)
+{
+    if (!s_bl_on) return;
+    Board::GetInstance().GetBacklight()->SetBrightness(0, false);  // 一時消灯(保存値は維持)
+    s_bl_on = false;
+    power_lite_set_screen_off(true);   // 画面OFF → ライトスリープ許可へ
+}
+
+static void backlight_set_on(void)
+{
+    if (s_bl_on) return;
+    power_lite_set_screen_off(false);  // 先に抑止へ戻す(復帰後すぐ寝ない)
+    Board::GetInstance().GetBacklight()->RestoreBrightness();  // 保存していた輝度に戻す
+    s_bl_on = true;
+    lv_display_trigger_activity(NULL); // idle をリセット(直後の再消灯を防ぐ)
+}
+
+static void backlight_timer_cb(lv_timer_t* t)
+{
+    (void)t;
+    // 自動消灯が有効(= Smart HAMLOG 在室中)のときだけ 15 秒で消す。外では既定の表示のまま。
+    if (!s_backlight_autooff) return;
+    if (s_bl_on && lv_display_get_inactive_time(NULL) > BACKLIGHT_IDLE_MS) {
+        backlight_set_off();
+    }
+}
+
+bool Hal::isBacklightOn()
+{
+    return s_bl_on;
+}
+
+void Hal::setBacklightAutoOff(bool enabled)
+{
+    s_backlight_autooff = enabled;
+    if (!enabled) {
+        // 無効化(Smart HAMLOG 退室)時は必ず点灯へ戻し、握りつぶし状態も解除する。
+        backlight_set_on();
+        s_swallow_touch = false;
+    }
+}
 
 static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     hal_bridge::lock();
     auto& bridge_data = hal_bridge::get_data();
+    const bool    pressed = bridge_data.touchPoint.num != 0;
+    const int16_t px      = bridge_data.touchPoint.x;
+    const int16_t py      = bridge_data.touchPoint.y;
+    hal_bridge::unlock();
 
-    // mclog::tagInfo(_tag, "touchpoint: {}, x: {}, y: {}", bridge_data.touchPoint.num, bridge_data.touchPoint.x,
-    //                bridge_data.touchPoint.y);
-
-    if (bridge_data.touchPoint.num == 0) {
+    // 消灯中のタップ: 点灯のみ行い、その押下は LVGL に渡さない(下のボタン誤爆防止)。
+    if (!s_bl_on) {
+        if (pressed) {
+            backlight_set_on();
+            s_swallow_touch = true;  // この押下が離れるまで握りつぶす
+        }
         data->state = LV_INDEV_STATE_RELEASED;
-    } else {
-        data->state   = LV_INDEV_STATE_PRESSED;
-        data->point.x = bridge_data.touchPoint.x;
-        data->point.y = bridge_data.touchPoint.y;
+        return;
+    }
+    if (s_swallow_touch) {
+        if (pressed) {
+            data->state = LV_INDEV_STATE_RELEASED;  // 点灯のきっかけタッチを継続して握りつぶす
+            return;
+        }
+        s_swallow_touch = false;  // 離した → 次のタップから通常動作
     }
 
-    hal_bridge::unlock();
+    if (pressed) {
+        data->state   = LV_INDEV_STATE_PRESSED;
+        data->point.x = px;
+        data->point.y = py;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
 }
 
 void Hal::lvgl_init()
@@ -312,6 +391,9 @@ void Hal::lvgl_init()
     lv_indev_set_read_cb(lvTouchpad, lvgl_read_cb);
     lv_indev_set_group(lvTouchpad, lv_group_get_default());
     lv_indev_set_display(lvTouchpad, hal_bridge::display_get_lvgl_display());
+
+    // #4 バックライト自動消灯の監視 (0.5 秒ごと。点灯は lvgl_read_cb が担当)。
+    lv_timer_create(backlight_timer_cb, 500, nullptr);
 
     hal_bridge::disply_lvgl_unlock();
 }

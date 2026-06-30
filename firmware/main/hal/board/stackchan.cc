@@ -248,9 +248,14 @@ private:
     hal_bridge::XiaozhiConfig_t xiaozhi_config_;
     bool last_power_save_enabled_      = false;
     int64_t last_power_state_check_ms_ = 0;
+    // アプリ(Smart HAMLOG)が在室中に標準の省電力(PowerSaveTimer: 画面OFF/シャットダウン)を
+    // 抑止するためのフラグ。在室中は 15 秒バックライト消灯だけで運用し、CAT 中の自動シャット
+    // ダウンを防ぐ。退室で解除し、放電状態に応じた既定挙動へ戻る。
+    bool app_power_save_suppressed_    = false;
 
     bool ShouldEnablePowerSave(bool has_external_power, bool is_discharging) const
     {
+        if (app_power_save_suppressed_) return false;  // アプリ抑止中は標準省電力を無効化
         return is_discharging || (has_external_power && xiaozhi_config_.allowShutdownWhenCharging);
     }
 
@@ -530,7 +535,8 @@ public:
         charging                     = pmic_->IsCharging();
         discharging                  = pmic_->IsDischarging();
         if (discharging != last_discharging) {
-            power_save_timer_->SetEnabled(discharging);
+            // アプリ抑止中は放電状態が変わっても PowerSaveTimer を再有効化しない(抑止を尊重)。
+            if (!app_power_save_suppressed_) power_save_timer_->SetEnabled(discharging);
             last_discharging = discharging;
         }
 
@@ -544,6 +550,16 @@ public:
             power_save_timer_->WakeUp();
         }
         WifiBoard::SetPowerSaveLevel(level);
+    }
+
+    // アプリから標準省電力(PowerSaveTimer)の抑止を切り替える。抑止解除時は放電状態に応じて
+    // 既定挙動へ即時復帰する。
+    void SetAppPowerSaveSuppressed(bool suppressed)
+    {
+        if (suppressed == app_power_save_suppressed_) return;
+        app_power_save_suppressed_ = suppressed;
+        if (suppressed) power_save_timer_->WakeUp();  // 抑止開始時に溜まったアイドルをリセット
+        UpdatePowerSaveEnabled(pmic_->IsExternalPowerConnected(), pmic_->IsDischarging());
     }
 
     virtual Backlight* GetBacklight() override
@@ -564,6 +580,12 @@ i2c_master_bus_handle_t hal_bridge::board_get_i2c_bus()
 {
     auto& board = (M5StackCoreS3Board&)Board::GetInstance();
     return board.GetI2cBus();
+}
+
+void hal_bridge::board_set_power_save_suppressed(bool suppressed)
+{
+    auto& board = (M5StackCoreS3Board&)Board::GetInstance();
+    board.SetAppPowerSaveSuppressed(suppressed);
 }
 
 StackChanCamera* hal_bridge::board_get_camera()

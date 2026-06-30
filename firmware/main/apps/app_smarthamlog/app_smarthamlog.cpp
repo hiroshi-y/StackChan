@@ -19,6 +19,7 @@
 #include "freertos/task.h"            // xTaskCreate(QUIT の非同期停止)
 #include "esp_heap_caps.h"           // プレビュー RGB565 バッファ(PSRAM)
 #include <cstring>                    // memcpy
+#include "hal/hal.h"                  // GetHAL().setBacklightAutoOff(15秒バックライト)
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit::lvgl_cpp;
@@ -26,8 +27,8 @@ using namespace smooth_ui_toolkit::lvgl_cpp;
 AppSmartHamlog::AppSmartHamlog()
 {
     setAppInfo().name = "Smart HAMLOG";
-    // アイコン(暫定: 既存のコントローラアイコンを流用。専用ラジオアイコンは後日アセット生成)
-    static auto icon = assets::get_image("icon_controller.bin");
+    // アイコン: Smart HAMLOG 公式アイコン (icon-256.png を 150x150 RGB565A8 へ変換)。
+    static auto icon = assets::get_image("icon_smarthamlog.bin");
     setAppInfo().icon = (void*)&icon;
 }
 
@@ -105,6 +106,12 @@ void AppSmartHamlog::onCreate()
 void AppSmartHamlog::onOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
+    // Smart HAMLOG 在室中だけ「15 秒バックライト消灯のみ」の電源管理にする:
+    //   - 15 秒バックライト自動消灯を有効化(タップ復帰の握りつぶし付き)
+    //   - 標準の省電力(PowerSaveTimer: 画面OFF/シャットダウン)を抑止(CAT 中の自動シャットダウン防止)
+    // 退室(onClose)で両方とも既定へ戻す。スクリーンセーバーはランチャー専用なので在室中は元々動かない。
+    GetHAL().setBacklightAutoOff(true);
+    hal_bridge::board_set_power_save_suppressed(true);
     LvglLockGuard lock;
 
     // カメラプレビュー(背景・初期は非表示。ペアリング中のみ表示)。最初に作るので最背面。
@@ -333,6 +340,9 @@ static void shl_teardown_task(void *arg)
 void AppSmartHamlog::onClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
+    // 在室中の電源管理を既定へ戻す: 15 秒自動消灯を無効化(=点灯に戻す)+ 標準省電力の抑止を解除。
+    GetHAL().setBacklightAutoOff(false);
+    hal_bridge::board_set_power_save_suppressed(false);
 
     if (_pairing) { cat_qr_end(); _pairing = false; }
 

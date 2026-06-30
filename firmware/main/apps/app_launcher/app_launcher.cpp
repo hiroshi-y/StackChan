@@ -82,6 +82,8 @@ void AppLauncher::screensaver_update()
     const uint32_t SCREENSAVER_TIMEOUT_MS = 30000;
 
     uint32_t idle_time = lv_display_get_inactive_time(NULL);
+    // ランチャー(メニュー)では従来どおりスクリーンセーバーを動かす。Smart HAMLOG 在室中は
+    // ランチャー自体が更新されないため、セーバーは自然に動かない(= アプリ内では無効)。
     if (idle_time >= SCREENSAVER_TIMEOUT_MS) {
         if (!_screensaver) {
             _screensaver = std::make_unique<view::Screensaver>();

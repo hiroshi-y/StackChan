@@ -201,6 +201,11 @@ public:
     void lvglUnlock();
     void setBackLightBrightness(uint8_t brightness, bool permanent = false);
     uint8_t getBackLightBrightness();
+    // 自動消灯(#4)でバックライトが点灯中か。消灯中はスクリーンセーバー等の無駄な描画を止める判定に使う。
+    bool isBacklightOn();
+    // 15 秒バックライト自動消灯の有効/無効。Smart HAMLOG 在室中のみ有効化する想定。
+    // 無効化時はバックライトを点灯へ戻す。
+    void setBacklightAutoOff(bool enabled);
 
     /* --------------------------------- Xiaozhi -------------------------------- */
     void requestXiaozhiStart()

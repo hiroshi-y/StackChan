@@ -427,7 +427,16 @@ function(build_default_assets_bin)
     
     list(APPEND BUILD_ARGS "--esp_sr_model_path" "${ESP_SR_MODEL_PATH}")
     list(APPEND BUILD_ARGS "--xiaozhi_fonts_path" "${XIAOZHI_FONTS_PATH}")
-    
+
+    # extra_files (assets/assets_bin) 配下の実ファイルを DEPENDS に含める。
+    # これが無いと、アイコン等を追加/変更しても generated_assets.bin が再生成されず、
+    # 古いアセットがフラッシュされてしまう(get_image が not-found → 画像が出ない)。
+    # CONFIGURE_DEPENDS で、ファイル追加/削除時に CMake が自動で再 glob する。
+    set(_ASSETS_EXTRA_DEPS "")
+    if(DEFAULT_ASSETS_EXTRA_FILES)
+        file(GLOB_RECURSE _ASSETS_EXTRA_DEPS CONFIGURE_DEPENDS "${DEFAULT_ASSETS_EXTRA_FILES}/*")
+    endif()
+
     # Create custom command to build assets
     add_custom_command(
         OUTPUT ${GENERATED_ASSETS_BIN}
@@ -435,6 +444,7 @@ function(build_default_assets_bin)
         DEPENDS
             ${SDKCONFIG}
             ${XIAOZHI_MAIN_DIR}/../scripts/build_default_assets.py
+            ${_ASSETS_EXTRA_DEPS}
         COMMENT "Building default assets.bin based on configuration"
         VERBATIM
     )
