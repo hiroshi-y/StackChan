@@ -77,8 +77,12 @@ static void rx_reset(void) { s_rxlen = 0; }
 
 static void parse_rx(void)
 {
-    if (s_mode == CAT_MODE_ICOM_CIV) {
-        long hz = -1;
+    // モード(s_mode)に依らず Icom / Yaesu(Kenwood)両方のフレームを試す。ブラウザから
+    // モードが渡らないため、リグ種別を問わず画面に周波数を出せるようにする(表示専用)。
+    long hz = -1;
+
+    // 1) Icom CI-V: FE FE .. cmd(03/00) .. 5BCD .. FD
+    {
         size_t i = 0;
         while (i + 5 < s_rxlen) {
             if (s_rx[i] == 0xFE && s_rx[i + 1] == 0xFE) {
@@ -88,8 +92,7 @@ static void parse_rx(void)
                 uint8_t cmd = (j - i >= 4) ? s_rx[i + 4] : 0xFF;
                 size_t dstart = i + 5, dcount = (j > dstart) ? (j - dstart) : 0;
                 if ((cmd == 0x03 || cmd == 0x00) && dcount == 5) {
-                    char s[11];
-                    int p = 0;
+                    char s[11]; int p = 0;
                     for (int k = 4; k >= 0; k--) {
                         uint8_t b = s_rx[dstart + k];
                         s[p++] = '0' + ((b >> 4) & 0xf);
@@ -103,33 +106,31 @@ static void parse_rx(void)
             }
             i++;
         }
-        if (hz >= 0) {
-            s_freq_mhz = (double)hz / 1e6;
-            char m[28]; snprintf(m, sizeof(m), "Read: %.4f MHz", s_freq_mhz);
-            ui_log("RX", m);
-            rx_reset();
-        }
-    } else { // Yaesu/Kenwood ASCII: FA<digits>;
+    }
+
+    // 2) Yaesu新/Kenwood ASCII: FA<digits>;(Icom で取れなければ)
+    if (hz < 0) {
         for (size_t i = 0; i + 3 < s_rxlen; i++) {
             if (s_rx[i] == 'F' && s_rx[i + 1] == 'A') {
                 size_t j = i + 2;
                 while (j < s_rxlen && s_rx[j] != ';') j++;
                 if (j < s_rxlen) {
-                    char s[16];
-                    size_t p = 0;
+                    char s[16]; size_t p = 0;
                     for (size_t k = i + 2; k < j && p < sizeof(s) - 1; k++) {
                         if (s_rx[k] >= '0' && s_rx[k] <= '9') s[p++] = s_rx[k];
                     }
                     s[p] = 0;
-                    if (p >= 8) {
-                        s_freq_mhz = atol(s) / 1e6;
-                        char m[28]; snprintf(m, sizeof(m), "Read: %.4f MHz", s_freq_mhz);
-                        ui_log("RX", m);
-                        rx_reset(); return;
-                    }
+                    if (p >= 8) { hz = atol(s); break; }
                 }
             }
         }
+    }
+
+    if (hz >= 0) {
+        s_freq_mhz = (double)hz / 1e6;
+        char m[28]; snprintf(m, sizeof(m), "Read: %.4f MHz", s_freq_mhz);
+        ui_log("RX", m);
+        rx_reset();
     }
 }
 
@@ -157,7 +158,9 @@ static void event_cb(const cdc_acm_host_dev_event_data_t *e, void *arg)
 // TX バイト列に「周波数セット」コマンドがあれば MHz を返す(無ければ -1)。画面表示用。
 static double parse_tx_set_mhz(const uint8_t *d, size_t n)
 {
-    if (s_mode == CAT_MODE_ICOM_CIV) {
+    // モードに依らず両方試す(ブラウザからモードが渡らないため)。
+    // 1) Icom CI-V: FE FE .. 05 .. FD
+    {
         for (size_t i = 0; i + 5 < n; i++) {
             if (d[i] == 0xFE && d[i + 1] == 0xFE) {
                 size_t j = i + 2;
@@ -178,7 +181,9 @@ static double parse_tx_set_mhz(const uint8_t *d, size_t n)
                 i = j;
             }
         }
-    } else { // Yaesu: FA<digits>;(桁あり = セット)
+    }
+    // 2) Yaesu新/Kenwood ASCII: FA<digits>;(桁あり = セット)
+    {
         for (size_t i = 0; i + 3 < n; i++) {
             if (d[i] == 'F' && d[i + 1] == 'A') {
                 size_t j = i + 2; char s[16]; size_t p = 0;

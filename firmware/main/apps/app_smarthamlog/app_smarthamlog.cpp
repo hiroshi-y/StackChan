@@ -34,6 +34,7 @@ AppSmartHamlog::AppSmartHamlog()
 static std::unique_ptr<Button> _btn_quit;
 static lv_obj_t* _lbl_title  = nullptr;
 static lv_obj_t* _lbl_status = nullptr;
+static lv_obj_t* _lbl_batt   = nullptr;   // 電池残量(左上)
 static lv_obj_t* _lbl_freq   = nullptr;
 static lv_obj_t* _lbl_log    = nullptr;
 static std::unique_ptr<Button> _btn_pair;
@@ -127,6 +128,13 @@ void AppSmartHamlog::onOpen()
     lv_obj_set_style_pad_top(_lbl_title, 8, 0);
     lv_obj_set_style_pad_bottom(_lbl_title, 8, 0);
     lv_obj_align(_lbl_title, LV_ALIGN_TOP_MID, 0, 0);
+
+    // 電池残量(左上・題字ヘッダの上に重ねる)。題字の後に作って前面に。
+    _lbl_batt = lv_label_create(lv_screen_active());
+    lv_label_set_text(_lbl_batt, "");
+    lv_obj_set_style_text_color(_lbl_batt, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_lbl_batt, &lv_font_montserrat_16, 0);
+    lv_obj_align(_lbl_batt, LV_ALIGN_TOP_LEFT, 6, 10);
 
     // ステータス(上部): WiFi + RIG 接続
     _lbl_status = lv_label_create(lv_screen_active());
@@ -289,6 +297,12 @@ void AppSmartHamlog::onRunning()
              cat_core_connected() ? "OK" : "--");
     lv_label_set_text(_lbl_status, sb);
 
+    if (_lbl_batt) {   // 電池残量(充電中は先頭に +)
+        char bb[16];
+        snprintf(bb, sizeof(bb), "%s%d%%", GetHAL().isBatteryCharging() ? "+" : "", (int)GetHAL().getBatteryLevel());
+        lv_label_set_text(_lbl_batt, bb);
+    }
+
     // 診断: 空きヒープ + 前回リセット要因 + RX 周波数。WS 未接続でエラーがあれば WS エラーを表示。
     char fb[80];
     unsigned heapK = (unsigned)(esp_get_free_heap_size() / 1024);
@@ -334,6 +348,7 @@ void AppSmartHamlog::onClose()
     _btn_pair.reset();
     if (_img_preview){ lv_obj_del(_img_preview);_img_preview= nullptr; }
     if (_lbl_title)  { lv_obj_del(_lbl_title);  _lbl_title  = nullptr; }
+    if (_lbl_batt)   { lv_obj_del(_lbl_batt);   _lbl_batt   = nullptr; }
     if (_lbl_status) { lv_obj_del(_lbl_status); _lbl_status = nullptr; }
     if (_lbl_freq)   { lv_obj_del(_lbl_freq);   _lbl_freq   = nullptr; }
     if (_lbl_log)    { lv_obj_del(_lbl_log);    _lbl_log    = nullptr; }
