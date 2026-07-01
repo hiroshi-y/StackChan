@@ -6,7 +6,7 @@
 //   トークンは base64 で来る。復号して 32 バイトなら hex(64文字)に戻す(worker は 64-hex 期待)。
 #include "cat_provision.hpp"
 #include "cat_store.hpp"
-#include "ssid_manager.h"
+#include "cat_hal.h"   // cat_hal_wifi_add_ssid(WiFi 認証情報の保存)。機種ごとに cat_hal.cpp で実装。
 #include "cJSON.h"
 #include "mbedtls/base64.h"
 #include "esp_log.h"
@@ -73,8 +73,8 @@ bool cat_provision_apply_json(const char *json, int len, char *summary, int summ
 
     if (!parsed || !ssid[0]) { ESP_LOGW(TAG, "bad format"); return false; }
 
-    // WiFi → StackChan の SsidManager
-    SsidManager::GetInstance().AddSsid(ssid, pass);
+    // WiFi 認証情報を保存(実装は機種依存: StackChan=SsidManager / cat-box=独自)。
+    cat_hal_wifi_add_ssid(ssid, pass);
     ESP_LOGI(TAG, "AddSsid: %s", ssid);
 
     // トークン: base64 → 32 バイトなら hex(64文字)に戻す(worker は 64-hex 期待)。

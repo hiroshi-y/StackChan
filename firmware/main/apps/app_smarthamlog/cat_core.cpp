@@ -3,7 +3,7 @@
 // bsp_i2c_get_handle)を除去し、StackChan の I2C バス + AW9523 で VBUS を供給、USB ホストは
 // usb_host_install / cdc_acm_host_install を自前で行う。
 #include "cat_core.hpp"
-#include "hal/board/hal_bridge.h"   // hal_bridge::board_get_i2c_bus()
+#include "cat_hal.h"   // ボード依存の抽象(I2C バス / ログ)。機種ごとに cat_hal.cpp で実装。
 #include "driver/i2c_master.h"
 #include "usb/usb_host.h"
 #include "soc/usb_dwc_struct.h"
@@ -49,8 +49,9 @@ static char   s_log[80] = "";
 static double s_freq_mhz = 0.0;
 static void ui_log(const char *pfx, const char *msg)
 {
-    snprintf(s_log, sizeof(s_log), "%s %s", pfx, msg);
+    snprintf(s_log, sizeof(s_log), "%s %s", pfx, msg);   // polling 表示用(StackChan)
     ESP_LOGI(TAG, "%s %s", pfx, msg);
+    cat_hal_log(pfx, msg);   // push 表示用(cat-box はログ欄へ)。StackChan は no-op。
 }
 double cat_core_last_freq_mhz(void) { return s_freq_mhz; }
 const char *cat_core_last_log(void) { return s_log; }
@@ -441,7 +442,7 @@ void cat_core_init(void)
 // ここでは USB_OTG_EN(P0_5, reg0x02 bit5)を立てるだけで USB-C コネクタへ 5V が出る。
 static void enable_usb_host_vbus(void)
 {
-    i2c_master_bus_handle_t bus = hal_bridge::board_get_i2c_bus();
+    i2c_master_bus_handle_t bus = cat_hal_i2c_bus();
     if (!bus) { ui_log("!!", "i2c bus unavailable"); return; }
     i2c_master_dev_handle_t aw = nullptr;
     i2c_device_config_t dc = {};
@@ -466,7 +467,7 @@ static void enable_usb_host_vbus(void)
 // AW9523 の USB_OTG_EN(P0_5)を落とす(VBUS 供給停止)。停止時に呼ぶ。
 static void disable_usb_host_vbus(void)
 {
-    i2c_master_bus_handle_t bus = hal_bridge::board_get_i2c_bus();
+    i2c_master_bus_handle_t bus = cat_hal_i2c_bus();
     if (!bus) return;
     i2c_master_dev_handle_t aw = nullptr;
     i2c_device_config_t dc = {};

@@ -5,7 +5,7 @@
 #include "cat_bridge.hpp"
 #include "cat_core.hpp"
 #include "cat_store.hpp"   // NVS のトークン/ホスト(QR ペアリング)
-#include "hal/hal.h"   // GetHAL(), WifiStatus
+#include "cat_hal.h"   // WiFi 等のボード依存の抽象。機種ごとに cat_hal.cpp で実装。
 
 #if __has_include("cat_config.h")
 #include "cat_config.h"
@@ -143,19 +143,17 @@ static void ws_start(void)
 // WiFi を確保してから WSS を開始するタスク。
 static void bridge_task(void *arg)
 {
-    // WiFi が未接続なら StackChan の HAL で接続開始(既に上がっていれば呼ばない)。
-    if (GetHAL().getWifiStatus() == WifiStatus::None) {
-        GetHAL().startNetwork([](std::string_view m) {
-            ESP_LOGI(TAG, "net: %.*s", (int)m.size(), m.data());
-        });
+    // WiFi が未接続なら接続開始(既に上がっていれば呼ばない)。実装は機種依存(cat_hal)。
+    if (!cat_hal_wifi_connected()) {
+        cat_hal_wifi_start();
     }
     // 接続待ち(最大 ~25s)。
     int waited = 0;
-    while (!s_stop && GetHAL().getWifiStatus() == WifiStatus::None && waited < 25000) {
+    while (!s_stop && !cat_hal_wifi_connected() && waited < 25000) {
         vTaskDelay(pdMS_TO_TICKS(500));
         waited += 500;
     }
-    if (!s_stop && GetHAL().getWifiStatus() != WifiStatus::None) {
+    if (!s_stop && cat_hal_wifi_connected()) {
         ws_start();
     } else if (!s_stop) {
         snprintf(s_last_err, sizeof(s_last_err), "wifi timeout");
