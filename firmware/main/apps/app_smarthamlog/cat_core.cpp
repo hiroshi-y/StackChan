@@ -305,15 +305,28 @@ void cat_core_set_baud(uint32_t baud)
 // ---- USB ホストライブラリのイベント処理タスク(BSP の代替)----
 static void usb_lib_task(void *arg)
 {
+    bool no_clients_seen = false;
     while (true) {
-        uint32_t event_flags;
-        usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
+        uint32_t event_flags = 0;
+        // finite timeout にして、イベントが来なくても s_stop / デバイス数を再評価できるようにする。
+        // portMAX_DELAY だと「無デバイスで停止 → cdc uninstall 後に ALL_FREE が来ない」ケースで
+        // ここが永久に待ち、s_lib_done が上がらず usb_host_uninstall が INVALID_STATE で失敗し、
+        // 次回 usb_host_install が 0x103(INVALID_STATE)になる(再入室バグの原因)。
+        usb_host_lib_handle_events(pdMS_TO_TICKS(200), &event_flags);
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
             usb_host_device_free_all();
+            no_clients_seen = true;
         }
-        // 停止時: 全デバイス解放済み(ALL_FREE)になったらループを抜ける。
         if (s_stop && (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE)) {
             break;
+        }
+        // 保険: 停止要求済み & クライアント解除済み(NO_CLIENTS 到達)& デバイス 0 なら、
+        //       ALL_FREE を待たずに抜ける(= uninstall 可能な状態)。無デバイス時の固まり回避。
+        if (s_stop && no_clients_seen) {
+            uint8_t addrs[8];
+            int n = 0;
+            usb_host_device_addr_list_fill(8, addrs, &n);
+            if (n == 0) break;
         }
     }
     if (s_lib_done) xSemaphoreGive(s_lib_done);
@@ -500,6 +513,15 @@ void cat_core_start(void)
     // カメラ等が LEVEL1 スロットを使い切っていると ESP_ERR_NOT_FOUND(0x105)で失敗するため。
     host_config.intr_flags = 0;
     esp_err_t err = usb_host_install(&host_config);
+    if (err == ESP_ERR_INVALID_STATE) {
+        // 前回の停止で uninstall が失敗し、ホストが残っている場合の回復。
+        // 残存ホストを uninstall してから 1 回だけ再 install する(再入室 0x103 の保険)。
+        ESP_LOGW(TAG, "usb_host_install INVALID_STATE; uninstalling stale host and retrying");
+        ui_log("..", "recovering USB host");
+        usb_host_uninstall();
+        vTaskDelay(pdMS_TO_TICKS(150));
+        err = usb_host_install(&host_config);
+    }
     if (err != ESP_OK) {
         char eb[48];
         snprintf(eb, sizeof(eb), "usb_host_install fail 0x%x", (unsigned)err);
@@ -544,8 +566,17 @@ void cat_core_stop(void)
     // 3. usb_lib_task が ALL_FREE で抜けるのを待つ
     if (s_lib_done) xSemaphoreTake(s_lib_done, pdMS_TO_TICKS(3000));
 
-    // 4. USB ホストライブラリを uninstall → USB-OTG PHY を解放
-    usb_host_uninstall();
+    // 4. USB ホストライブラリを uninstall → USB-OTG PHY を解放。
+    //    失敗(INVALID_STATE: lib task の抜けが間に合わない等)時は少し待って数回リトライする。
+    //    ここで確実に uninstall しないと、次回 usb_host_install が 0x103 で失敗する。
+    esp_err_t ue = ESP_FAIL;
+    for (int i = 0; i < 5; i++) {
+        ue = usb_host_uninstall();
+        if (ue == ESP_OK) break;
+        ESP_LOGW(TAG, "usb_host_uninstall retry %d: 0x%x", i, (unsigned)ue);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (ue != ESP_OK) ui_log("!!", "usb_host_uninstall failed");
 
     // 4b. 内部 PHY を USB-Serial/JTAG に戻す(= COM9 復帰)。uninstall だけでは PHY が
     //     JTAG にルーティングされないため、明示的に SERIAL_JTAG 用 PHY を作る。

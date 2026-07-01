@@ -304,9 +304,17 @@ void AppSmartHamlog::onRunning()
              cat_core_connected() ? "OK" : "--");
     lv_label_set_text(_lbl_status, sb);
 
-    if (_lbl_batt) {   // 電池残量(充電中は先頭に +)
-        char bb[16];
-        snprintf(bb, sizeof(bb), "%s%d%%", GetHAL().isBatteryCharging() ? "+" : "", (int)GetHAL().getBatteryLevel());
+    if (_lbl_batt) {   // 電池アイコン + 残量%(残量でアイコンを切替、充電中は先頭に充電マーク)
+        const int  lvl = (int)GetHAL().getBatteryLevel();
+        const bool chg = GetHAL().isBatteryCharging();
+        const char* sym = lvl >= 90 ? LV_SYMBOL_BATTERY_FULL
+                        : lvl >= 70 ? LV_SYMBOL_BATTERY_3
+                        : lvl >= 40 ? LV_SYMBOL_BATTERY_2
+                        : lvl >= 15 ? LV_SYMBOL_BATTERY_1
+                        :             LV_SYMBOL_BATTERY_EMPTY;
+        char bb[24];
+        // 例: "🔋 73%" / 充電中 "⚡🔋 73%"
+        snprintf(bb, sizeof(bb), "%s%s %d%%", chg ? LV_SYMBOL_CHARGE : "", sym, lvl);
         lv_label_set_text(_lbl_batt, bb);
     }
 
