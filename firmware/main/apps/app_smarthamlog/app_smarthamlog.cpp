@@ -33,6 +33,7 @@ AppSmartHamlog::AppSmartHamlog()
 }
 
 static std::unique_ptr<Button> _btn_quit;
+static lv_obj_t* _bg         = nullptr;   // 暗色の全画面背景(白文字を確実に見せるため)
 static lv_obj_t* _lbl_title  = nullptr;
 static lv_obj_t* _lbl_status = nullptr;
 static lv_obj_t* _lbl_batt   = nullptr;   // 電池残量(左上)
@@ -114,6 +115,17 @@ void AppSmartHamlog::onOpen()
     hal_bridge::board_set_power_save_suppressed(true);
     LvglLockGuard lock;
 
+    // 暗色の全画面背景を必ず敷く。これを作らないと、ランチャーの動的背景色(smarthamlog は
+    // 既定 0xDADADA=薄いグレー)を継承したままとなり、背景なしの白文字ラベル(ステータス/
+    // 診断/ログ)が薄い背景に埋もれて見えなくなる。最初に作るので最背面。
+    _bg = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(_bg);
+    lv_obj_set_size(_bg, LV_PCT(100), LV_PCT(100));
+    lv_obj_align(_bg, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(_bg, lv_color_hex(0x0b1f2a), 0);
+    lv_obj_set_style_bg_opa(_bg, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(_bg, LV_OBJ_FLAG_SCROLLABLE);
+
     // カメラプレビュー(背景・初期は非表示。ペアリング中のみ表示)。最初に作るので最背面。
     if (!_preview_rgb)
         _preview_rgb = (uint16_t*)heap_caps_malloc(cat_qr_width() * cat_qr_height() * 2, MALLOC_CAP_SPIRAM);
@@ -171,7 +183,7 @@ void AppSmartHamlog::onOpen()
 
     _btn_quit = std::make_unique<Button>(lv_screen_active());
     _btn_quit->setSize(84, 44);    // 題字(24)より小さく。タップはしやすいサイズ
-    _btn_quit->setAlign(LV_ALIGN_BOTTOM_RIGHT);
+    _btn_quit->setAlign(LV_ALIGN_BOTTOM_LEFT);   // 左下(分かりやすさのため QUIT を左に)
     _btn_quit->label().setText("QUIT");
     _btn_quit->label().setTextFont(&lv_font_montserrat_16);
     _btn_quit->onClick().connect([this]() { close(); });
@@ -179,7 +191,7 @@ void AppSmartHamlog::onOpen()
     // PAIR: カメラで QR を読んで WiFi/トークンをプロビジョニング
     _btn_pair = std::make_unique<Button>(lv_screen_active());
     _btn_pair->setSize(84, 44);
-    _btn_pair->setAlign(LV_ALIGN_BOTTOM_LEFT);
+    _btn_pair->setAlign(LV_ALIGN_BOTTOM_RIGHT);   // 右下(QUIT と左右入れ替え)
     _btn_pair->label().setText("PAIR");
     _btn_pair->label().setTextFont(&lv_font_montserrat_16);
     _btn_pair->onClick().connect([this]() {
@@ -365,6 +377,7 @@ void AppSmartHamlog::onClose()
     _btn_quit.reset();
     _btn_pair.reset();
     if (_img_preview){ lv_obj_del(_img_preview);_img_preview= nullptr; }
+    if (_bg)         { lv_obj_del(_bg);         _bg         = nullptr; }
     if (_lbl_title)  { lv_obj_del(_lbl_title);  _lbl_title  = nullptr; }
     if (_lbl_batt)   { lv_obj_del(_lbl_batt);   _lbl_batt   = nullptr; }
     if (_lbl_status) { lv_obj_del(_lbl_status); _lbl_status = nullptr; }
