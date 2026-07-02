@@ -1,7 +1,7 @@
 # Define xiaozhi source directory
 set(XIAOZHI_MAIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../xiaozhi-esp32/main")
 
-file(GLOB_RECURSE STACK_CHAN_SOURCES CONFIGURE_DEPENDS
+file(GLOB_RECURSE STACK_CHAN_SOURCES
     "apps/*.c"
     "apps/*.cc"
     "apps/*.cpp"
